@@ -11,6 +11,9 @@ artifacts/
 *.flac
 node_modules/
 target/
+dist/
+playwright-report/
+test-results/
 .DS_Store
 .planning/tmp/
 

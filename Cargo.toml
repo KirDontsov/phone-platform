@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["phone-api", "phone-worker", "crates/domain", "crates/contracts", "crates/persistence"]
+
+[profile.dev]
+debug = 0
+
+[profile.dev.package."*"]
+debug = false

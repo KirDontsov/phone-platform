@@ -1,0 +1,11 @@
+.git
+.planning
+.env
+.env.*
+secrets
+**/node_modules
+**/target
+data
+**/__pycache__
+
+**/dist

@@ -1,0 +1,28 @@
+# Use together with compose.yml, after setting a private production env file.
+# TLS termination belongs to the operator's reverse proxy on the same machine.
+services:
+  api:
+    restart: unless-stopped
+    environment:
+      DEMO_MODE: "false"
+      COOKIE_SECURE: "true"
+    read_only: true
+    tmpfs: [/tmp:size=64m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  worker:
+    restart: unless-stopped
+    environment:
+      DEMO_MODE: "false"
+    read_only: true
+    tmpfs: [/tmp:size=512m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  client:
+    restart: unless-stopped
+  db:
+    restart: unless-stopped
+  rabbitmq:
+    restart: unless-stopped
+  mailpit:
+    profiles: [development-mail]

@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?run setup-local.py}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run setup-local.py}
+      POSTGRES_DB: ${POSTGRES_DB:?run setup-local.py}
+    ports: ["127.0.0.1:25437:5432"]
+    volumes: ["database:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:4-alpine@sha256:8425b8435b0203e87292cf1a4a7e5f8108c610bbd8217f8cc952f43628b24987
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports: ["127.0.0.1:25672:5672"]
+    volumes: ["broker:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  mailpit:
+    image: axllent/mailpit:v1.27@sha256:e22dce5b36f93c77082e204a3942fb6b283b7896e057458400a4c88344c3df68
+    ports: ["127.0.0.1:18025:8025", "127.0.0.1:11025:1025"]
+  media-init:
+    image: busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+    command: ["sh", "-c", "chown 10001:10001 /media && chmod 700 /media"]
+    volumes: ["media:/media"]
+  api:
+    build: {context: .., dockerfile: phone-api/Dockerfile}
+    env_file: ../.env.platform
+    depends_on:
+      media-init: {condition: service_completed_successfully}
+      db: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    ports: ["127.0.0.1:18080:8080"]
+    volumes: ["media:/app/media"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/phone-api", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  worker:
+    build: {context: .., dockerfile: phone-worker/Dockerfile}
+    env_file: ../.env.platform
+    depends_on:
+      api: {condition: service_healthy}
+    volumes: ["media:/app/media"]
+  client:
+    build: {context: .., dockerfile: phone-client/Dockerfile}
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["127.0.0.1:18081:80"]
+volumes:
+  database:
+  broker:
+  media:

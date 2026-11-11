@@ -1,0 +1,26 @@
+services:
+  model-runner:
+    profiles: [ai]
+    build:
+      context: ..
+      dockerfile: infra/model-runner/Dockerfile
+    image: phone-platform-model-runner:opencode-1.18.10
+    environment:
+      OPENCODE_SERVER_PASSWORD: ${MODEL_RUNNER_PASSWORD:?run setup-local.py to generate MODEL_RUNNER_PASSWORD}
+    env_file:
+      - path: ../secrets/model-runner.env
+        required: false
+    expose: ["4096"]
+    read_only: true
+    user: "10001:10001"
+    working_dir: /work
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
+      - /work:rw,noexec,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=0700
+    mem_limit: 768m
+    pids_limit: 96
+    stop_grace_period: 15s
+    restart: unless-stopped
