@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+secrets/
+data/
+storage/
+artifacts/
+*.wav
+*.mp3
+*.m4a
+*.flac
+node_modules/
+target/
+.DS_Store
+.planning/tmp/

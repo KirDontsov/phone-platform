@@ -1,0 +1,38 @@
+# Phase 1: API Телфина: вся доступная история
+
+Status: planned, implementation not started. Updated: 2026-11-11.
+
+## Goal
+
+Доказать получение всей доступной истории выбранной АТС и зафиксировать реальный контракт до промышленной реализации.
+
+## Decisions
+
+D-01: Импортировать историю вызовов, а не список записей.
+
+D-02: Не исключать missed/internal/no-recording.
+
+D-03: Фиксировать фактический scope и coverage.
+
+D-04: Spike на Python stdlib, production на Rust.
+
+## Dependencies
+
+Нет. Live acceptance требует доступа к API.
+
+## Open Questions
+
+Права клиента, hostname, доступная глубина истории, pagination termination, устойчивый CDR key и канал аудио. Без доступа подготовить fixtures, но M0 не закрывать.
+
+## Source Coverage
+
+| Source | Coverage |
+|---|---|
+| GOAL | 01-01, 01-02 |
+| REQ | TEL-01, TEL-02, TEL-03; распределение в frontmatter планов |
+| RESEARCH | Каждый constraint в RESEARCH.md должен быть актуализирован и проверен указанными validation сценариями |
+| CONTEXT | D-01…D-04 включены в действия планов; явные исключения не добавлять без изменения контекста |
+
+## Deferred Ideas
+
+Публичный биллинг, новая АТС и речевой бот не входят в эту фазу. Лидирование не подтверждено и не выводится из слова «легирование».
