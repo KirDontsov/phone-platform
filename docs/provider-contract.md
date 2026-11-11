@@ -13,10 +13,17 @@
 | Лимиты | gzip; RateLimit headers, Reset в секундах, общий часовой бюджет клиента | [API rules](https://ringme-confluence.atlassian.net/wiki/spaces/Ringme/pages/1901920568/API) |
 | Запись | GET /client/{id}/record/{uuid} — binary; storage_url endpoint возвращает record_url. MIME может быть application/octet-stream, filename содержит PII | [Record](https://ringme-confluence.atlassian.net/wiki/spaces/Ringme/pages/1901921281/record) |
 
+## Семантика результата и разговора с сотрудником
+
+Whole-call enum: `busy`, `answered`, `bridged`, `not answered`, `rejected`, `failed`. `answered` может означать только ответ IVR/очереди; `bridged` подтверждает соединение с оператором. CLI считает эти результаты раздельно, неизвестные значения сохраняет raw. [Официальный calls/result](https://ringme-confluence.atlassian.net/wiki/spaces/Ringme/pages/1930231842/calls).
+
+В правилах перезвона нужен отдельный `human_connected`: true для `bridged` либо отдельно доказанного соединения с сотрудником. Один `answered`, наличие записи или CDR answered без подтверждения роли сотрудника не закрывают обращение. Минимальная длительность проверяется по времени соединения с сотрудником, а не по общей длительности IVR/очереди.
+
 ## Решения CLI, требующие live-проверки
 
 - Пример документации начинает page с 1 и не содержит total/has_more. CLI завершает окно только на пустом массиве, проверяет echoed metadata, защищён от повторения страниц и изменения effective page size. Это консервативное правило обхода, ещё не доказанный конец на конкретной АТС.
 - В запросах order=asc и UTC datetime с точностью секунд; init_time_gmt должен лежать внутри lower..upper. Точную inclusivity, применяемое поле времени, допустимую длину интервала и поддержку сортировки проверить. В прототипе необъяснённое расхождение — ошибка, не пропуск строки.
+- `max_pages` хранится отдельно от immutable spec как execution budget: его увеличение при resume не меняет набор данных и не повторяет уже committed pages. Расширение `max_windows` меняет временной охват и требует нового каталога.
 - Local per_page=100 и max=1000 — настройки прототипа, не заявленные лимиты провайдера. Ограничение диапазона списка record не переносится на call_history.
 - Текущий logical key — call_uuid; каждое отличающееся содержимое отмечается в variants. CDR хранится в raw snapshot и отдельном NDJSON с ordinal; это не гарантированная identity плеча. На переводах/очередях подтвердить cardinality и соответствие webhook CallID.
 - Дедупликация и фиксированный end не устраняют дрейф offset pagination при позднем появлении/изменении строк. Полнота требует контрольного периода и повторного сканирования в новый каталог. Production polling/reconciliation — фаза 3.

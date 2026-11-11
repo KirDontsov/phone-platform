@@ -35,6 +35,8 @@ UTC = dt.timezone.utc
 ROOT = Path(__file__).resolve().parent.parent
 ALLOWED_HOSTS = frozenset({'apiproxy.telphin.ru', 'altapi.telphin.ru'})
 MAX_BODY = 32 * 1024 * 1024
+# Whole-call enum from Telphin /calls/. CDR results have a separate vocabulary.
+CALL_RESULTS = frozenset({'busy', 'answered', 'bridged', 'not answered', 'rejected', 'failed'})
 
 
 class SafeError(Exception):
@@ -427,14 +429,25 @@ class Store:
     def set_meta(self, key, value):
         self.db.execute('INSERT OR REPLACE INTO meta VALUES(?,?)', (key, canonical(value)))
 
-    def initialize(self, spec, windows):
+    def initialize(self, spec, windows, *, max_pages):
         old = self.get_meta('spec')
         if old is not None:
-            if old != spec:
+            # Older CLI versions included max_pages in spec. It is an execution
+            # safety budget, not part of the identity of already committed data.
+            immutable_old = {key: value for key, value in old.items() if key != 'max_pages'}
+            if immutable_old != spec:
                 raise SafeError('resume_parameters_mismatch')
+            previous_budget = self.get_meta('execution_budget')
+            old_max_pages = previous_budget['max_pages'] if previous_budget else old.get('max_pages', max_pages)
+            if max_pages < old_max_pages:
+                raise SafeError('resume_budget_cannot_decrease')
+            with self.db:
+                self.set_meta('spec', spec)
+                self.set_meta('execution_budget', {'max_pages': max_pages})
             return
         with self.db:
             self.set_meta('spec', spec)
+            self.set_meta('execution_budget', {'max_pages': max_pages})
             for number, (start, end) in enumerate(windows):
                 self.db.execute('INSERT INTO windows(id,start,end) VALUES(?,?,?)', (number, stamp(start), stamp(end)))
 
@@ -475,7 +488,7 @@ class Store:
                 call = json.loads(payload)
                 cdr = call.pop('cdr')
                 result = call.get('result')
-                result_counts[result if isinstance(result, str) and result in {'answered', 'bridged', 'missed', 'busy', 'failed', 'no answer', 'cancel'} else 'other_or_unknown'] += 1
+                result_counts[result if isinstance(result, str) and result in CALL_RESULTS else 'other_or_unknown'] += 1
                 direction = call.get('flow')
                 direction_counts[direction if isinstance(direction, str) and direction in {'in', 'out', 'internal'} else 'other_or_unknown'] += 1
                 calls_stream.write(canonical({'organization_id': binding['organization_id'], 'client_id': binding['client_id'], 'call': call}) + '\n')
@@ -486,7 +499,8 @@ class Store:
                         'snapshot_ordinal': ordinal, 'leg': leg}) + '\n')
         completed = not unresolved
         manifest = {'schema_version': 1, 'organization_id': binding['organization_id'],
-            'provider_client_id': binding['client_id'], 'requested': spec, 'scanned_windows': scanned,
+            'provider_client_id': binding['client_id'], 'requested': spec,
+            'execution_budget': self.get_meta('execution_budget'), 'scanned_windows': scanned,
             'unresolved_windows': unresolved, 'pagination_scan_complete': completed,
             'provider_completeness_verified': False, 'lower_bound': 'unknown' if spec['all_available'] else 'operator_requested',
             'status': ('partial_unknown_lower_bound' if spec['all_available'] else 'completed_requested_range') if completed else 'incomplete',
@@ -533,8 +547,8 @@ def export(client, directory, *, start=None, end=None, all_available=False,
             start = end - dt.timedelta(days=(window_days * max_windows)) + dt.timedelta(seconds=max_windows - 1)
         spec = {'start': stamp(start), 'end': stamp(end), 'all_available': all_available,
                 'window_days': window_days, 'max_windows': max_windows, 'per_page': per_page,
-                'max_pages': max_pages, 'order': 'asc'}
-        store.initialize(spec, make_windows(start, end, window_days))
+                'order': 'asc'}
+        store.initialize(spec, make_windows(start, end, window_days), max_pages=max_pages)
         pending_time = store.get_meta('next_attempt_at')
         if pending_time and pending_time > client.clock():
             raise SafeError('rate_limited', status=429, next_attempt_at=pending_time)

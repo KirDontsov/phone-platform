@@ -355,14 +355,14 @@ class TestExportAndDurability(unittest.TestCase):
 
     def test_three_pages_same_timestamp_server_clamp_and_no_audio_are_preserved(self):
         calls = {1: [call(1, result='bridged', cdr=[leg(result='answered elsewhere'), leg()])],
-                 2: [call(2, result='missed', cdr=[])],
+                 2: [call(2, result='not answered', cdr=[])],
                  3: [call(3, flow='internal', cdr=[leg()])], 4: []}
         client = FakeClient(lambda a, b, n, s: page(n, calls[n], size=1))
         report = self.export(client)
         self.assertEqual([1, 2, 3, 4], [r[2] for r in client.requests])
         self.assertEqual(3, report['calls'])
         self.assertEqual(3, report['latest_snapshot_legs'])
-        self.assertEqual({'bridged': 1, 'missed': 1, 'answered': 1}, report['call_results'])
+        self.assertEqual({'bridged': 1, 'not answered': 1, 'answered': 1}, report['call_results'])
         self.assertEqual(1, report['directions']['internal'])
         self.assertTrue(report['pagination_scan_complete'])
         self.assertFalse(report['provider_completeness_verified'])
@@ -370,6 +370,21 @@ class TestExportAndDurability(unittest.TestCase):
         self.assertIn('answered elsewhere', [x['leg']['result'] for x in raw_legs])
         self.assertNotIn('answered elsewhere', report['call_results'])
         self.assertEqual(3, len(list((self.directory / 'calls.ndjson').read_text().splitlines())))
+
+    def test_every_official_whole_call_result_has_its_own_counter(self):
+        official = ['busy', 'answered', 'bridged', 'not answered', 'rejected', 'failed']
+        values = [call(index, result=result) for index, result in enumerate(official, 1)]
+        client = FakeClient(lambda a, b, n, size: page(n, values if n == 1 else [], size=100))
+        report = self.export(client)
+        self.assertEqual({value: 1 for value in official}, report['call_results'])
+        self.assertEqual(6, report['calls'])
+        self.assertNotIn('other_or_unknown', report['call_results'])
+
+    def test_unrecognized_result_is_preserved_raw_and_counted_as_unknown(self):
+        report = self.export(FakeClient(lambda a, b, n, size: page(n, [call(result='future-provider-value')] if n == 1 else [])))
+        self.assertEqual({'other_or_unknown': 1}, report['call_results'])
+        raw = json.loads((self.directory / 'calls.ndjson').read_text().splitlines()[0])
+        self.assertEqual('future-provider-value', raw['call']['result'])
 
     def test_rerun_uses_committed_checkpoint_without_refetching_completed_pages(self):
         first = FakeClient(lambda a, b, n, s: page(n, [call()] if n == 1 else []))
@@ -482,6 +497,50 @@ class TestExportAndDurability(unittest.TestCase):
         self.assert_code('max_pages_reached', lambda: self.export(client, max_pages=2))
         self.assertEqual(2, len(client.requests))
         self.assertEqual('incomplete', self.read_manifest()['status'])
+
+    def test_increasing_page_budget_resumes_only_uncommitted_pages(self):
+        first = FakeClient(lambda a, b, n, size: page(n, [call(n)]))
+        self.assert_code('max_pages_reached', lambda: self.export(first, max_pages=2))
+        self.assertEqual([1, 2], [request[2] for request in first.requests])
+        resumed = FakeClient(lambda a, b, n, size: page(n, []))
+        report = self.export(resumed, max_pages=3)
+        self.assertEqual([3], [request[2] for request in resumed.requests])
+        self.assertTrue(report['pagination_scan_complete'])
+        self.assertEqual(2, report['calls'])
+        self.assertEqual({'max_pages': 3}, report['execution_budget'])
+        self.assertNotIn('max_pages', report['requested'])
+
+    def test_legacy_checkpoint_page_budget_migrates_without_reimport(self):
+        self.assert_code('max_pages_reached', lambda: self.export(
+            FakeClient(lambda a, b, n, size: page(n, [call(n)])), max_pages=1))
+        with sqlite3.connect(self.directory / 'checkpoint.sqlite3') as db:
+            original = json.loads(db.execute("SELECT value FROM meta WHERE key='spec'").fetchone()[0])
+            original['max_pages'] = 1
+            db.execute("UPDATE meta SET value=? WHERE key='spec'", (json.dumps(original),))
+            db.execute("DELETE FROM meta WHERE key='execution_budget'")
+        resumed = FakeClient(lambda a, b, n, size: page(n, []))
+        report = self.export(resumed, max_pages=2)
+        self.assertEqual([2], [request[2] for request in resumed.requests])
+        self.assertEqual(1, report['calls'])
+        self.assertNotIn('max_pages', report['requested'])
+        self.assertEqual({'max_pages': 2}, report['execution_budget'])
+
+    def test_resume_keeps_data_parameters_fixed_when_budget_increases(self):
+        self.assert_code('max_pages_reached', lambda: self.export(
+            FakeClient(lambda a, b, n, size: page(n, [call(n)])), max_pages=1))
+        for updates in ({'per_page': 50}, {'start': START - dt.timedelta(days=1)},
+                        {'end': END + dt.timedelta(days=1)}, {'window_days': 1}):
+            with self.subTest(updates=updates):
+                client = FakeClient(lambda *args: self.fail('Changed data identity must not request history'))
+                self.assert_code('resume_parameters_mismatch', lambda: self.export(client, max_pages=2, **updates))
+        self.assertEqual(1, self.db_value('SELECT COUNT(*) FROM calls'))
+
+    def test_resume_rejects_decreasing_page_budget_without_network(self):
+        self.assert_code('max_pages_reached', lambda: self.export(
+            FakeClient(lambda a, b, n, size: page(n, [call(n)])), max_pages=2))
+        client = FakeClient(lambda *args: self.fail('Decreased budget must not request history'))
+        self.assert_code('resume_budget_cannot_decrease', lambda: self.export(client, max_pages=1))
+        self.assertEqual(0, client.probes)
 
     def test_all_available_honors_window_budget_and_does_not_infer_retention_from_empty(self):
         client = FakeClient(lambda a, b, n, s: page(n, []))

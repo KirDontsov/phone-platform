@@ -34,7 +34,7 @@
         "call_uuid": "00000000000000000000000000000002",
         "client_owner_id": 42,
         "init_time_gmt": "2026-01-31 23:59:59.31",
-        "result": "missed",
+        "result": "not answered",
         "flow": "in",
         "from_username": "synthetic-caller",
         "cdr": []
