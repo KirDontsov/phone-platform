@@ -10,9 +10,9 @@ Status: planned, implementation not started. Updated: 2026-11-11.
 
 D-01: Rust Actix/Diesel/Tokio, Vue/Pinia/Tailwind.
 
-D-02: Monorepo и независимые БД/очереди.
+D-02: Monorepo и инфраструктура, независимая от Bondscan; общая PostgreSQL нового сервиса с изоляцией компаний по organization_id.
 
-D-03: Tenant membership — серверный источник прав.
+D-03: Сразу несколько компаний с изолированными данными; tenant membership — серверный источник прав. У каждой компании собственные подключения, credentials и настройки. Выбор компании проверяет сервер, смена очищает client state и отсекает старые ответы/события.
 
 D-04: Закрытые приглашения, без публичной регистрации.
 
@@ -26,7 +26,7 @@ D-04: Закрытые приглашения, без публичной рег�
 - 02-02: Vue entrypoints/build/API client/Playwright; 10 путей, package-lock включён.
 - 02-03: Shared crates, access/jobs/outbox schema, Compose и полный migration/readiness smoke; 14 путей.
 - 02-04: Session auth, CSRF, reset; 14 путей.
-- 02-05: Roles/invites/recipient acceptance E2E; 12 путей.
+- 02-05: Roles/invites/recipient acceptance E2E; 13 путей.
 
 Waves 1→2→3→4→5 и явные depends_on. PLAT-01 закрывается после 02-03, jobs/outbox schema готова до production sync фазы 3. Никаких path dependencies на несуществующие crates и обещания migration-ready на scaffold этапах.
 
@@ -45,4 +45,4 @@ Waves 1→2→3→4→5 и явные depends_on. PLAT-01 закрывается
 
 ## Deferred Ideas
 
-Публичный биллинг, новая АТС и речевой бот не входят в эту фазу. Лидирование не подтверждено и не выводится из слова «легирование».
+Публичный биллинг, новая АТС и речевой бот не входят в эту фазу. Пользователь уточнил: речь о тегировании; создание лидов не относится к этому требованию.

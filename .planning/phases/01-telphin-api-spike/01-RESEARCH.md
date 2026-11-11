@@ -17,7 +17,7 @@ API проверяет сессию, membership и команды; worker вып
 
 D-01: Импортировать историю вызовов, а не список записей. D-02: Не исключать missed/internal/no-recording. D-03: Фиксировать фактический scope и coverage. D-04: Spike на Python stdlib, production на Rust.
 
-Права клиента, hostname, доступная глубина истории, pagination termination, устойчивый CDR key и канал аудио. Без доступа подготовить fixtures, но M0 не закрывать.
+Права клиента, hostname, доступная глубина истории, pagination termination, устойчивый CDR key и канал аудио. Пользователь подтвердил, что доступ к API и записям уже есть. Настроить его локально для выбранной компании, проверить права и принадлежность АТС; до реального probe/сверки M0 не закрывать.
 
 ## Validation Architecture
 

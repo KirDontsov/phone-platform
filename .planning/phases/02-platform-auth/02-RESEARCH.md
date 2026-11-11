@@ -16,7 +16,7 @@ API проверяет сессию, membership и команды; worker вып
 
 ## Constraints and Pitfalls
 
-D-01: Rust Actix/Diesel/Tokio, Vue/Pinia/Tailwind. D-02: Monorepo и независимые БД/очереди. D-03: Tenant membership — серверный источник прав. D-04: Закрытые приглашения, без публичной регистрации.
+D-01: Rust Actix/Diesel/Tokio, Vue/Pinia/Tailwind. D-02: Monorepo и инфраструктура, независимая от Bondscan; общая PostgreSQL нового сервиса с изоляцией компаний по organization_id. D-03: Несколько компаний с первого запуска; membership и выбранный tenant проверяет сервер, данные/credentials/settings изолированы. Переключение компании не сохраняет чужие stores/cache и не принимает старые responses/SSE. D-04: Закрытые приглашения, без публичной регистрации.
 
 Домен, SMTP/reset канал, storage backend и production host. Local Compose и mail catcher не требуют production секретов.
 

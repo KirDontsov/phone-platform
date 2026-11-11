@@ -42,6 +42,8 @@ Rust cargo focused tests; отдельные PostgreSQL/RabbitMQ/storage в из
 
 ## Manual Gates
 
+Обязательная матрица двух компаний: отдельные owners/connections/settings, одинаковые provider IDs без склейки, user с разными ролями, membership-checked company selection и сброс UI при смене, поздний response/SSE предыдущей компании не применяется. API auth и browser auth suite покрывают эти случаи; job/media/connector checks дополняют матрицу в своих фазах.
+
 UAT owner bootstrap→login→reset/logout и invite email→accept/setup→login с ролями. Всё автоматизируемое, включая тестовый email и получение ссылки из mail catcher, выполняет executor.
 
 ## Validation Sign-Off

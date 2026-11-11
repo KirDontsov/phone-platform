@@ -64,7 +64,7 @@ node /Users/kirilldoncov/.claude/get-shit-done/bin/gsd-tools.cjs verify plan-str
 
 ## Preflight для реализации
 
-Фаза 1: есть доступ к Телфину, проверенный hostname, локальные secrets вне Git и известный контрольный период в кабинете. Если ключей пока нет, реализовать CLI и fixtures; live acceptance оставить human_needed, M0 не закрывать.
+Фаза 1: пользователь подтвердил имеющийся доступ к API Телфина и записям. Настроить его локально для конкретной компании, проверить hostname/права/принадлежность АТС и выбрать контрольный период в кабинете. Secrets вне Git; подтверждение пользователя не заменяет фактический probe и сверку. При недоступной локальной конфигурации подготовить CLI и fixtures, live acceptance оставить human_needed; M0 не закрывать.
 
 Фазы 5–6: доступны разрешённые для обработки записи и выбранный ASR/LLM provider, его runtime credentials и согласованный предел расходов. Нет provider access — можно проверить adapter contract, но не ставить production-ready.
 
