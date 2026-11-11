@@ -1,6 +1,12 @@
 # Roadmap: Phone Platform v1
 
-Created: 2026-11-11. Это полный план работ, а не отчёт о реализованном сервисе.
+Created/updated: 2026-11-11. Ниже исходные цели фаз; фактическая реализация и evidence записаны в phase SUMMARY/VERIFICATION, открытые acceptance gates — в UAT.
+
+## Реализация для финального теста
+
+Все 10 фаз исполнены на уровне кода и локальных проверок, 26 планов имеют summaries/mapping. Веб-стенд: http://localhost:18081; запуск `scripts/dev.sh up`. Rust47 / frontend20 / Docker E2E13 / CLI56 PASS; clean-volume Compose, runner isolation и actual backup/restore проверены. [Фактический отчёт](../docs/pilot-report.md), [состояние](STATE.md), [UAT](../docs/uat.md).
+
+Пользовательский UAT и live-приёмка Телфин/ASR/LLM/CRM/Sheets остаются Pending; поэтому milestone M0/M3 и все фазы не помечаются полностью принятыми. Последнее указание пользователя разрешило выполнять разработку следующих фаз до закрытия M0. Ключевые отклонения реализации: polling вместо webhook lifecycle, AST в Rust вместо SQL, общий retention компании — [решения](../docs/architecture-decisions.md).
 
 ## v1.0 — Milestones
 

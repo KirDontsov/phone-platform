@@ -4,12 +4,12 @@ Vue 3, TypeScript, Vite, Pinia, Tailwind. Все данные загружают
 
 ```bash
 npm ci
-npm run dev
+API_PROXY=http://127.0.0.1:18080 npm run dev -- --port 18082
 npm run build
 npm test
 ```
 
-Dev server: http://localhost:5173, proxy `/api` → http://127.0.0.1:8080. Для другого backend задайте `API_PROXY`. Dockerfile собирает production SPA с nginx, `/api` проксируется в `api:8080`.
+Команда выше запускает dev server на http://localhost:18082, proxy `/api` → http://127.0.0.1:18080 (API из корневого Compose). Этот origin уже разрешён локальным setup. Для другой пары адресов задайте `API_PROXY` и серверный `ALLOWED_ORIGINS`. Dockerfile собирает production SPA с nginx, `/api` проксируется в `api:8080`.
 
 Frontend реализует вход/reset/invite, переключение компаний, dashboard, журнал/пагинацию/конструктор фильтров/сохранённые представления, карточку с аудио/расшифровкой/оценкой/доказательствами/разметкой/историей, callback episodes, настройки сотрудников/критериев/провайдеров/интеграций и операции/audit.
 
