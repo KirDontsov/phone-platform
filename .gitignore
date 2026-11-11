@@ -13,3 +13,6 @@ node_modules/
 target/
 .DS_Store
 .planning/tmp/
+
+__pycache__/
+*.py[cod]

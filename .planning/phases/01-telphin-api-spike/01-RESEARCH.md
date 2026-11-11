@@ -3,6 +3,10 @@
 **Date:** 2026-11-11
 **Status:** documentation-researched; live-unverified
 
+## Execution Update
+
+Публичный контракт повторно проверен перед реализацией: [01-CONTRACT-UPDATE.md](01-CONTRACT-UPDATE.md). Реализованы stdlib CLI, durable SQLite page/checkpoint транзакции, атомарные private raw/NDJSON/manifest и offline reconciliation. Документационные гипотезы и live-неизвестные закреплены в [provider-contract](../../../docs/provider-contract.md). Пользователь отдельно поручил завершить CLI без живого подключения; запросы аккаунта не выполнялись.
+
 Документация исследована 2026-11-11; live-проверки не выполнены. Источник — research/TELPHIN.md: trusted OAuth client_credentials, call_history с CDR, gzip, почасовые RateLimit headers. per_page, нижняя граница истории и границы времени требуют реальной проверки.
 
 ## Sources

@@ -1,0 +1,23 @@
+{
+  "provenance": "documentation-derived/live-unverified",
+  "cases": [
+    {
+      "status": 403,
+      "headers": {},
+      "body": {
+        "error": "synthetic-permission-denied"
+      },
+      "expected_code": "permission_denied"
+    },
+    {
+      "status": 429,
+      "headers": {
+        "X-RateLimit-Reset": "3600"
+      },
+      "body": {
+        "error": "rate_limit_exceeded"
+      },
+      "expected_code": "rate_limited"
+    }
+  ]
+}

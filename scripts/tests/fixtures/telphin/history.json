@@ -1,0 +1,44 @@
+{
+  "provenance": "documentation-derived/live-unverified",
+  "description": "Synthetic, normalized response shape; no real client data.",
+  "response": {
+    "page": 1,
+    "per_page": 100,
+    "order": "asc",
+    "call_history": [
+      {
+        "call_uuid": "00000000000000000000000000000001",
+        "client_owner_id": 42,
+        "init_time_gmt": "2026-01-31 23:59:59.31",
+        "result": "bridged",
+        "flow": "in",
+        "from_username": "synthetic-caller",
+        "cdr": [
+          {
+            "client_owner_id": 42,
+            "extension_id": 7,
+            "result": "answered elsewhere",
+            "record_uuid": null,
+            "storage_url": null
+          },
+          {
+            "client_owner_id": 42,
+            "extension_id": 7,
+            "result": "answered",
+            "record_uuid": "synthetic-recording",
+            "storage_url": null
+          }
+        ]
+      },
+      {
+        "call_uuid": "00000000000000000000000000000002",
+        "client_owner_id": 42,
+        "init_time_gmt": "2026-01-31 23:59:59.31",
+        "result": "missed",
+        "flow": "in",
+        "from_username": "synthetic-caller",
+        "cdr": []
+      }
+    ]
+  }
+}
