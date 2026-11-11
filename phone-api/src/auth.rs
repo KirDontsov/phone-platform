@@ -466,7 +466,8 @@ async fn accept_invite(
   let user=if let Some(user)=old{if !verify_password(&password,&user.password_hash){return Err(ApiError::new(401,"existing_account_password","Для существующего аккаунта укажите текущий пароль"));}user}else{
    diesel::sql_query("INSERT INTO users(email,name,password_hash) VALUES($1,$2,$3) RETURNING id,email,name,password_hash").bind::<Text,_>(email).bind::<Text,_>(name).bind::<Text,_>(encoded).get_result::<UserRow>(c)?};
   let role=grant.role.unwrap_or_else(||"reviewer".into());
-  diesel::sql_query("INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind::<SqlUuid,_>(org).bind::<SqlUuid,_>(user.id).bind::<Text,_>(role).execute(c)?;
+  let membership_created=diesel::sql_query("INSERT INTO memberships(organization_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind::<SqlUuid,_>(org).bind::<SqlUuid,_>(user.id).bind::<Text,_>(&role).execute(c)?>0;
+  persistence::save_document(c,org,Uuid::new_v4(),"audit",None,json!({"action":if membership_created{"membership.joined"}else{"invitation.accepted"},"user_id":user.id,"user_name":user.name,"subject_id":user.id,"details":{"invited_role":role,"membership_created":membership_created,"invitation_id":grant.id},"created_at":Utc::now()}),None)?;
   diesel::sql_query("UPDATE token_grants SET consumed_at=now() WHERE id=$1").bind::<SqlUuid,_>(grant.id).execute(c)?;
   create_session(c,&user,org,demo)
  })).await?;
@@ -519,6 +520,7 @@ async fn invite(
     let result=state.db(move|c|c.transaction::<_,ApiError,_>(|c|{
   diesel::sql_query("UPDATE token_grants SET consumed_at=now() WHERE organization_id=$1 AND email=$2 AND kind='invite' AND consumed_at IS NULL").bind::<SqlUuid,_>(ctx.organization_id).bind::<Text,_>(&email).execute(c)?;
   diesel::sql_query("INSERT INTO token_grants(id,token_hash,kind,organization_id,email,role,expires_at) VALUES($1,$2,'invite',$3,$4,$5,$6)").bind::<SqlUuid,_>(id).bind::<Text,_>(digest).bind::<SqlUuid,_>(ctx.organization_id).bind::<Text,_>(&email).bind::<Text,_>(&role).bind::<Timestamptz,_>(expires).execute(c)?;
+  crate::settings::audit(c,&ctx,"invitation.created",Some(id),json!({"role":role}))?;
   Ok(json!({"id":id,"email":email,"role":role,"expires_at":expires,"revoked":false}))
  })).await?;
     let url = format!("{}/invite/accept?token={}", state.public_url, token);
@@ -576,7 +578,9 @@ async fn update_member(
    let count=diesel::sql_query("SELECT count(*) FROM memberships WHERE organization_id=$1 AND role='owner'").bind::<SqlUuid,_>(ctx.organization_id).get_result::<Count>(c)?.count;
    if count<2{return Err(ApiError::bad("Нельзя изменить роль последнего владельца"));}
   }
+  let access_change=json!({"previous_role":target.data["role"],"requested_role":role.clone(),"extension_changed":has_extension});
   diesel::sql_query("UPDATE memberships SET role=COALESCE($1,role),extension=CASE WHEN $2 THEN $3 ELSE extension END WHERE organization_id=$4 AND user_id=$5").bind::<Nullable<Text>,_>(role).bind::<Bool,_>(has_extension).bind::<Nullable<Text>,_>(ext).bind::<SqlUuid,_>(ctx.organization_id).bind::<SqlUuid,_>(id).execute(c)?;
+  crate::settings::audit(c,&ctx,"membership.updated",Some(id),access_change)?;
   Ok(())
  })).await?;
     Ok(ok(json!({"ok":true})))
@@ -592,7 +596,7 @@ async fn remove_member(
   diesel::sql_query("SELECT jsonb_build_object('id',id) AS data FROM organizations WHERE id=$1 FOR UPDATE").bind::<SqlUuid,_>(ctx.organization_id).get_result::<OrgRow>(c)?;
   let current=diesel::sql_query("SELECT jsonb_build_object('role',role) AS data FROM memberships WHERE organization_id=$1 AND user_id=$2").bind::<SqlUuid,_>(ctx.organization_id).bind::<SqlUuid,_>(id).get_result::<OrgRow>(c).optional()?.ok_or_else(ApiError::missing)?;
   if current.data["role"]=="owner"{let count=diesel::sql_query("SELECT count(*) FROM memberships WHERE organization_id=$1 AND role='owner'").bind::<SqlUuid,_>(ctx.organization_id).get_result::<Count>(c)?.count;if count<2{return Err(ApiError::bad("Нельзя удалить последнего владельца"));}}
-  diesel::sql_query("DELETE FROM memberships WHERE organization_id=$1 AND user_id=$2").bind::<SqlUuid,_>(ctx.organization_id).bind::<SqlUuid,_>(id).execute(c)?;Ok(())
+  diesel::sql_query("DELETE FROM memberships WHERE organization_id=$1 AND user_id=$2").bind::<SqlUuid,_>(ctx.organization_id).bind::<SqlUuid,_>(id).execute(c)?;crate::settings::audit(c,&ctx,"membership.removed",Some(id),json!({"previous_role":current.data["role"]}))?;Ok(())
  })).await?;
     Ok(ok(json!({"ok":true})))
 }
@@ -603,7 +607,7 @@ async fn revoke_invite(
 ) -> Result<HttpResponse, ApiError> {
     let ctx = context(&state, &req, true, 2).await?;
     let id = *path;
-    state.db(move|c|{diesel::sql_query("UPDATE token_grants SET consumed_at=now() WHERE id=$1 AND organization_id=$2 AND kind='invite'").bind::<SqlUuid,_>(id).bind::<SqlUuid,_>(ctx.organization_id).execute(c)?;Ok(())}).await?;
+    state.db(move|c|c.transaction::<_,ApiError,_>(|c|{let count=diesel::sql_query("UPDATE token_grants SET consumed_at=now() WHERE id=$1 AND organization_id=$2 AND kind='invite' AND consumed_at IS NULL").bind::<SqlUuid,_>(id).bind::<SqlUuid,_>(ctx.organization_id).execute(c)?;if count==0{return Err(ApiError::missing());}crate::settings::audit(c,&ctx,"invitation.revoked",Some(id),json!({}))?;Ok(())})).await?;
     Ok(ok(json!({"ok":true})))
 }
 

@@ -482,6 +482,102 @@ async fn platform_auth_tenants_csrf_roles_annotations_filters_and_secrets() {
         member["extension"], "123",
         "Role-only updates must preserve extension mapping"
     );
+    // Access changes are audited atomically and only inside the active tenant.
+    let audit_before = {
+        let mut c = connection(&pool).unwrap();
+        let audits = persistence::list_documents(&mut c, org_a, "audit").unwrap();
+        let changed = audits
+            .iter()
+            .find(|a| {
+                a.data["action"] == "membership.updated"
+                    && a.data["subject_id"] == reviewer.to_string()
+            })
+            .unwrap();
+        assert_eq!(changed.organization_id, org_a);
+        assert_eq!(changed.data["user_id"], user_a.to_string());
+        assert_eq!(changed.data["details"]["previous_role"], "reviewer");
+        assert_eq!(changed.data["details"]["requested_role"], "manager");
+        assert_eq!(changed.data["details"]["extension_changed"], false);
+        audits.len()
+    };
+    let missing_member = request!(
+        patch,
+        &format!("/api/members/{}", Uuid::new_v4()),
+        json!({"role":"owner"}),
+        Some(cookie.as_str()),
+        Some(csrf.as_str())
+    );
+    assert_eq!(missing_member.status(), StatusCode::NOT_FOUND);
+    {
+        let mut c = connection(&pool).unwrap();
+        assert_eq!(
+            persistence::list_documents(&mut c, org_a, "audit")
+                .unwrap()
+                .len(),
+            audit_before
+        );
+    }
+    let invitation = Uuid::new_v4();
+    let foreign_invitation = Uuid::new_v4();
+    {
+        let mut c = connection(&pool).unwrap();
+        for (id, org) in [(invitation, org_a), (foreign_invitation, org_b)] {
+            diesel::sql_query("INSERT INTO token_grants(id,token_hash,kind,organization_id,role,expires_at) VALUES($1,$2,'invite',$3,'reviewer',$4)").bind::<SqlUuid,_>(id).bind::<Text,_>(auth::hash(&id.to_string())).bind::<SqlUuid,_>(org).bind::<Timestamptz,_>(Utc::now()+Duration::hours(1)).execute(&mut c).unwrap();
+        }
+    }
+    let foreign_revoke = request!(
+        delete,
+        &format!("/api/members/invitations/{foreign_invitation}"),
+        json!({}),
+        Some(cookie.as_str()),
+        Some(csrf.as_str())
+    );
+    assert_eq!(foreign_revoke.status(), StatusCode::NOT_FOUND);
+    {
+        let mut c = connection(&pool).unwrap();
+        assert_eq!(
+            persistence::list_documents(&mut c, org_a, "audit")
+                .unwrap()
+                .len(),
+            audit_before
+        );
+        assert!(persistence::list_documents(&mut c, org_b, "audit")
+            .unwrap()
+            .is_empty());
+    }
+    let revoke = request!(
+        delete,
+        &format!("/api/members/invitations/{invitation}"),
+        json!({}),
+        Some(cookie.as_str()),
+        Some(csrf.as_str())
+    );
+    assert_eq!(revoke.status(), StatusCode::OK);
+    let removal = request!(
+        delete,
+        &format!("/api/members/{reviewer}"),
+        json!({}),
+        Some(cookie.as_str()),
+        Some(csrf.as_str())
+    );
+    assert_eq!(removal.status(), StatusCode::OK);
+    {
+        let mut c = connection(&pool).unwrap();
+        let audits = persistence::list_documents(&mut c, org_a, "audit").unwrap();
+        for (action, subject) in [
+            ("invitation.revoked", invitation),
+            ("membership.removed", reviewer),
+        ] {
+            let event = audits
+                .iter()
+                .find(|a| a.data["action"] == action && a.data["subject_id"] == subject.to_string())
+                .unwrap();
+            assert_eq!(event.organization_id, org_a);
+            assert_eq!(event.data["user_id"], user_a.to_string());
+            assert!(!event.data.to_string().contains("token_hash"));
+            assert!(!event.data.to_string().contains(&email_r));
+        }
+    }
     let telphin = request!(
         put,
         "/api/connections/telphin",
@@ -559,6 +655,20 @@ async fn platform_auth_tenants_csrf_roles_annotations_filters_and_secrets() {
         Some(csrf_b.as_str())
     );
     assert_eq!(write_as_reviewer.status(), StatusCode::FORBIDDEN);
+    let forbidden_access_change = request!(
+        patch,
+        &format!("/api/members/{user_a}"),
+        json!({"role":"owner"}),
+        Some(cookie_b.as_str()),
+        Some(csrf_b.as_str())
+    );
+    assert_eq!(forbidden_access_change.status(), StatusCode::FORBIDDEN);
+    {
+        let mut c = connection(&pool).unwrap();
+        assert!(persistence::list_documents(&mut c, org_b, "audit")
+            .unwrap()
+            .is_empty());
+    }
     let foreign_after_switch = request!(
         get,
         &format!("/api/calls/{call_a}"),
