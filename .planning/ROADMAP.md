@@ -97,7 +97,7 @@ Created: 2026-11-11. Это полный план работ, а не отчёт
 
 | Phase | Plans complete | Implementation status |
 |-------|----------------|-----------------------|
-| 1 | 0/2 | Not started |
+| 1 | 1/2 | CLI offline passed; live deferred by user |
 | 2 | 0/5 | Not started |
 | 3 | 0/3 | Not started |
 | 4 | 0/3 | Not started |

@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: ready_to_execute
-stopped_at: Planning passed; next 01-01 API spike
+status: awaiting_live_verification
+stopped_at: Phase 1 CLI completed offline; live connection deferred by user
 last_updated: "2026-11-11"
 progress:
   total_phases: 10
   completed_phases: 0
   total_plans: 26
-  completed_plans: 0
+  completed_plans: 1
 ---
 
 # Project State
@@ -22,9 +22,9 @@ Core value: Каждое обращение видно, качество диа�
 ## Current Position
 
 Phase: 1 of 10 — Telphin API spike
-Plan: 0 of 26 completed
-Status: Planning complete. Independent PLAN-CHECK passed: 0 BLOCKER, 0 WARNING; 26 plans / 38 requirements. Product implementation not started.
-Implementation progress: 0%. Runtime продукта пока отсутствует.
+Plan: 1 of 26 completed offline; 01-02 live acceptance pending
+Status: Phase 1 CLI implemented and 50 offline tests passed; phase/M0 remains open until live evidence. Planning baseline remains passed.
+Implementation progress: CLI готов; веб-платформа и AI ещё не реализованы. Completed phases: 0/10.
 
 ## Decisions
 
@@ -41,7 +41,9 @@ Implementation progress: 0%. Runtime продукта пока отсутств�
 
 ## Next Action
 
-Исполнять `.planning/phases/01-telphin-api-spike/01-01-PLAN.md`: CLI OAuth/probe/export и offline failure fixtures. Подключить локально уже имеющийся доступ Телфина с проверкой принадлежности компании. Затем 01-02 — реальный контрольный период и отчёт полноты. Без API-доступа можно подготовить CLI, но live acceptance и M0 остаются неподтверждёнными. Реализацию фаз не начинали.
+CLI завершён без живого подключения по явному указанию пользователя. Для следующей live-сессии — локальная настройка имеющегося доступа и 01-02 probe/export/control comparison/audio sample/UAT. Сейчас credentials не запрашивать и реальные API-вызовы не выполнять. Phase 2 остаётся за зависимостью M0; готовность live-интеграции не подтверждена.
+
+Evidence: implementation commit `874ca1d`, 01-01-SUMMARY.md, 01-02-PROGRESS.md, 01-VALIDATION.md и 01-VERIFICATION.md. TEL-01…03 не отмечены live-complete.
 
 ## Planning Evidence
 

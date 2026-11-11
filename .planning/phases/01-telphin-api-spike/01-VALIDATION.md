@@ -1,37 +1,44 @@
 ---
 phase: "01-telphin-api-spike"
-status: draft
+status: offline_passed_live_pending
 nyquist_compliant: false
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-11-11
 ---
 
-# Phase 1: Validation Strategy
-
-Реализация отсутствует; команды целевые, не запущены. Перед execute актуализировать по созданному scaffold и реальным контрактам, определить latency каждого check и sampling frequency. Не заявлять Nyquist compliance до измерения.
+# Phase 1: Validation Evidence
 
 ## Test Infrastructure
 
-Python stdlib unittest и документированные обезличенные API fixtures.
+Python 3.11 stdlib unittest; fake transport и synthetic documentation-derived/live-unverified fixtures. Реальные credentials, телефоны и записи в suite не используются. SQLite и filesystem тестируются в изолированных temporary directories.
 
-## Per-Task Verification
+## Automated Evidence
 
-| Plan | Requirement IDs | Checks | Evidence |
-|---|---|---|---|
-| 01-01 | TEL-01, TEL-02 | python3 -m unittest discover -s scripts/tests -p 'test_telphin_spike.py'; python3 -m unittest discover -s scripts/tests -p 'test_telphin_spike.py' | SUMMARY с фактическим исходом |
-| 01-02 | TEL-02, TEL-03 | python3 -m unittest discover -s scripts/tests -p 'test_telphin_spike.py'; python3 scripts/telphin-spike.py probe | SUMMARY с фактическим исходом |
+```bash
+python3 -m unittest discover -s scripts/tests -p 'test_telphin_spike.py'
+```
 
-## Sampling
+Результат после последнего изменения: **50 tests, OK, 0.158 s**. `--help` работает без конфигурации и сети; отсутствующая конфигурация возвращает безопасный JSON/exit 1.
 
-После каждой доменной/внешней интеграционной задачи запускать её focused check; после плана — перечисленные integration/UI checks; после фазы — verifier по success criteria и регрессии затронутых контрактов. Избегать повторяющих реализацию тестов.
+| Plan | Requirements | Evidence |
+|------|--------------|----------|
+| 01-01 | TEL-01, TEL-02 | OAuth/HTTP/scope, all-outcomes pagination, durable checkpoint/resume, private output/tenant binding |
+| 01-02 offline | TEL-02, TEL-03 | failure fixtures, repeated/clamped pages, UTC boundaries, reconcile match/mismatch/incomplete и unknown lower bound |
 
-## Manual Gates and Live Evidence
+Проверены bounded401, expiry, 403, 429 deadline до нового probe, 5xx/обрыв ответа, malformed gzip/JSON/schema, страницы с одинаковыми timestamps, отсутствие аудио, calls против CDR, crash до/после commit, повтор без дублей, mismatch organization/client/app/params, locking/symlinks/private modes и redaction.
 
-- Проверить подготовленный обезличенный completeness-report против выбранного периода в кабинете Телфина. Подтвердить охват АТС и объяснение расхождений. До реального доступа и сверки фазу 1 не закрывать.
+После доменных исправлений запускался focused suite; broad повтор после зелёного результата без новых изменений не выполняется.
 
-## Sign-off
+## Independent Verification
 
-- [ ] Focused checks implemented and passed
-- [ ] Integration/failure cases passed
-- [ ] Required live evidence present
-- [ ] Independent verifier and UAT completed
+Отдельный implementation verifier проверяет код и итоговый suite. Его результат — 01-VERIFICATION.md. Наличие offline evidence не означает закрытие полной фазы.
+
+## Live and Human Gates
+
+По явному указанию пользователя живое подключение пока отложено. Scope/права реального аккаунта, pagination/retention, временные края, sample audio и сравнение с кабинетом не подтверждены. См. 01-UAT.md. `nyquist_compliant` остаётся false для незавершённой полной phase acceptance.
+
+- [x] Offline infrastructure and failure checks implemented/passed
+- [x] CLI usage and local configuration documented
+- [ ] Live API/scope/history evidence
+- [ ] Independent control period and audio sample verified
+- [ ] User UAT and M0 acceptance

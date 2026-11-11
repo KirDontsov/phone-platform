@@ -119,3 +119,11 @@ Revision 2 выполнена. Вместо механического сохр�
 Количество остаётся прежним: 10 фаз, 26 планов, 38 requirements. Пять затронутых PLAN.md прошли фактическую `verify plan-structure`: valid, errors 0, warnings 0. Содержательная проверка уточнений поручена отдельному `gsd_clarifications_check`; исходные исторические ревью сохраняют прежнее состояние. Реализация и обращения к API в этом обновлении не выполнялись.
 
 Результат независимой проверки уточнений: **VERIFICATION PASSED, 0 BLOCKER, 0 WARNING**. PLAN-CHECK.md обновлён с фактическим scope этого review и актуальными открытыми вопросами; coverage 38/38 сохранено.
+
+## Phase 1 — реализация CLI и независимая проверка
+
+Реализованы OAuth/probe/export/reconcile, durable SQLite checkpoint, private raw/NDJSON/manifest, company binding и bounded retries. Контракт повторно проверен по первичным источникам перед исполнением, см. 01-CONTRACT-UPDATE.md. Implementation commit: `874ca1d`.
+
+Тестовый агент создал failure/contract suite; implementation verifier независимо проверил код. Выявлены и исправлены: учёт overlap в бюджете max_windows; проверка UTC timestamps/запрошенного окна до checkpoint; необработанный zlib.error в повреждённом gzip; bounded retry для HTTPException/IncompleteRead; неверные типы optional history полей, способные повредить дальнейший snapshot. Добавлены regression cases. Итог: 50 тестов PASS, в том числе независимый запуск verifier (0.164 s), новых существенных дефектов нет.
+
+Пользователь явно указал: «Сначала заверши CLI без живого подключения». Эта работа завершена; новые запросы credentials и запросы аккаунта не выполняются. 01-VERIFICATION.md: offline_cli_status=passed, phase status=human_needed, M0 не закрыт. Plan 01-01 завершён offline; автоматическая часть 01-02 реализована, live/UAT остаются отдельным следующим шагом. Ни одно TEL-требование не помечено live-complete.
