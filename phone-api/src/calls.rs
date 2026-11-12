@@ -17,12 +17,68 @@ struct Policy {
 pub fn policy(conn: &mut diesel::PgConnection, org: Uuid) -> Result<Value, ApiError> {
     Ok(diesel::sql_query("SELECT jsonb_build_object('timezone',timezone,'callback_minutes',callback_minutes,'retention_days',retention_days)||data AS data FROM organizations WHERE id=$1").bind::<SqlUuid,_>(org).get_result::<Policy>(conn)?.data)
 }
+#[derive(Default)]
+struct RecordingAvailability {
+    ready: bool,
+    pending: bool,
+    rate_limited: bool,
+    failed: bool,
+}
+impl RecordingAvailability {
+    fn include(&mut self, data: &Value) {
+        if data["ready"] == true || data["state"] == "ready" {
+            self.ready = true;
+        } else if data["state"] == "failed" {
+            self.failed = true;
+        } else {
+            self.pending = true;
+            self.rate_limited |= data["last_error"] == "provider_rate_limited";
+        }
+    }
+    fn state(&self) -> &'static str {
+        if self.ready {
+            "ready"
+        } else if self.rate_limited {
+            "rate_limited"
+        } else if self.pending {
+            "pending"
+        } else if self.failed {
+            "failed"
+        } else {
+            "unknown"
+        }
+    }
+}
 pub fn all_calls(conn: &mut diesel::PgConnection, org: Uuid) -> Result<Vec<Value>, ApiError> {
     let mut calls = persistence::list_documents(conn, org, "call")?
         .into_iter()
         .filter(|d| d.data["deleted"].as_bool() != Some(true))
         .map(to_json)
         .collect::<Vec<_>>();
+    // One organization-scoped read; provider presence never implies a playable local file.
+    let mut recordings: HashMap<Uuid, RecordingAvailability> = HashMap::new();
+    for recording in persistence::list_documents(conn, org, "recording")? {
+        if let Some(parent) = recording.parent_id {
+            recordings
+                .entry(parent)
+                .or_default()
+                .include(&recording.data);
+        }
+    }
+    for call in &mut calls {
+        let summary = call["id"]
+            .as_str()
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .and_then(|id| recordings.get(&id));
+        call["recording_state"] =
+            json!(summary
+                .map(RecordingAvailability::state)
+                .unwrap_or_else(|| if call["has_recording"] == false {
+                    "none"
+                } else {
+                    "unknown"
+                }));
+    }
     let mut ordered = (0..calls.len()).collect::<Vec<_>>();
     ordered.sort_by_key(|&i| at(&calls[i]));
     let mut earlier = std::collections::HashSet::new();

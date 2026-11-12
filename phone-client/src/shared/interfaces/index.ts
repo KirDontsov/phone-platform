@@ -4,7 +4,8 @@ export interface Me {user:{id:string;name:string;email:string};organization:Orga
 export type Filter = {op:'and'|'or';rules:Filter[]} | {op:'not';rule:Filter} | {field:string;op:string;value?:unknown}
 export interface Taxon {id:string;name:string;color:string;archived:boolean}
 export interface Taxonomy {tags:Taxon[];statuses:Taxon[]}
-export interface Call {id:string;provider_id:string;started_at:string;phone:string;contact_name:string;employee:string;direction:string;provider_result:string;human_connected:boolean;duration:number;stage:string;status_id:string|null;tag_ids:string[];contact_kind:string;score:number|null;has_recording:boolean;note:string;manual_lock:boolean;version:number;coverage_complete:boolean}
+export type RecordingState='ready'|'pending'|'rate_limited'|'failed'|'none'|'unknown'
+export interface Call {id:string;provider_id:string;started_at:string;phone:string;contact_name:string;employee:string;direction:string;provider_result:string;human_connected:boolean;duration:number;stage:string;status_id:string|null;tag_ids:string[];contact_kind:string;score:number|null;has_recording:boolean;recording_state?:RecordingState;note:string;manual_lock:boolean;version:number;coverage_complete:boolean}
 export interface Coverage {complete:boolean;reason:string}
 export interface CallList {items:Call[];total:number;next_cursor:string|null;coverage:Coverage}
 export interface Segment {id:string;speaker:string;role:string;start:number;end:number;text:string}

@@ -28,3 +28,6 @@
 .sidebar>.brand,.sidebar>.workspace-picker,.sidebar-bottom{flex-shrink:0}
 .sidebar nav{flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin}
 .sidebar-bottom{padding-top:18px}
+
+.recording-mobile{display:none}.recording-badge{white-space:nowrap}.recording-badge svg{flex-shrink:0}
+@media(max-width:760px){.recording-column{display:none}.recording-mobile{display:inline-flex;margin-top:6px}}

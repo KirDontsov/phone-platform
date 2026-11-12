@@ -12,7 +12,7 @@ enum Kind {
 fn field_kind(field: &str) -> Option<Kind> {
     Some(match field {
         "direction" | "provider_result" | "employee" | "status_id" | "contact_kind" | "stage"
-        | "callback_state" => Kind::Text,
+        | "callback_state" | "recording_state" => Kind::Text,
         "score" | "duration" => Kind::Number,
         "started_at" => Kind::Date,
         "has_recording" | "human_connected" => Kind::Boolean,
@@ -220,6 +220,22 @@ mod tests {
             &json!({"score":null}),
             &json!({"field":"score","op":"is_null"})
         ));
+    }
+    #[test]
+    fn recording_availability_filters_are_distinct_from_provider_presence() {
+        let filter = json!({"field":"recording_state","op":"eq","value":"ready"});
+        assert!(validate_filter(&filter).is_ok());
+        assert!(!matches_filter(
+            &json!({"has_recording":true,"recording_state":"pending"}),
+            &filter
+        ));
+        assert!(matches_filter(
+            &json!({"has_recording":true,"recording_state":"ready"}),
+            &filter
+        ));
+        assert!(
+            validate_filter(&json!({"field":"recording_state","op":"eq","value":true})).is_err()
+        );
     }
     #[test]
     fn nested_tag_filters_and_timezone_dates() {

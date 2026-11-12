@@ -92,3 +92,7 @@ Phase12implementationdraft сохранён в отдельном Gitstash `dddd
 ## Записи: лимит API и ожидание плеера
 
 После liveимпорта ready391real(+17demo),pending126; provider429→retryна13:00UTC. ReadyfileпроверенHTTP206иmutedbrowserplayback. ИсправленAudioPlayer: pending/ratelimitedнеоткрываетmedia иобъясняетожидание, readyпоpollingвключаетсяавтоматически, готовыйфайлвыбираетсябезсбросавоспроизведения. Frontend51/51,5newbehaviourregressionsRED,actualbrowserready+pendingPASS. Clientdeployed. Подробностиreviews/RECORDING-AVAILABILITY.md. Фаза12остаётсянапaузе; лимитproviderобходомне снимается.
+
+## Доступность записи в списке
+
+CALL-01/CALL-03: вычисляемый recording_state, колонка «Запись», мобильный badge и быстрый фильтр по6 состояниям. «Можно слушать» означает завершённую загрузку; has_recording/stage не подменяют доступность. Один tenant-scoped bulk read без N+1. API/PG1 интеграционный PASS с17 случаями и RED без фикса, frontend56/56 и5 новых RED, domain14/14, cargo check/build PASS. API/client deployed healthy; реальный browser ready-filter507total/25rows, mobile390 без overflow, JS0. Детали reviews/RECORDING-LIST-AVAILABILITY.md. Финальный human UAT остаётся пользователю; фаза12 не возобновлялась.
