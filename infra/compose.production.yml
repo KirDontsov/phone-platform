@@ -26,3 +26,36 @@ services:
     restart: unless-stopped
   mailpit:
     profiles: [development-mail]
+  # The host MTA already permits loopback submission. This bridge is reachable
+  # only on this project's Docker gateway, and accepts only its exact subnet.
+  # It carries no mail/provider credentials and does not change host MTA trust.
+  smtp-relay:
+    image: alpine/socat@sha256:c5a091e1e735a90aa941a5828529dbe6c6157407a8047a9aa473faa133361b82
+    network_mode: host
+    command:
+      - "-T"
+      - "30"
+      - "TCP4-LISTEN:1587,bind=${PHONE_SMTP_BIND_ADDRESS:?set the own Phone Docker gateway},reuseaddr,fork,max-children=8,range=${PHONE_SMTP_ALLOWED_RANGE:?set the own Phone Docker subnet}"
+      - "TCP4:127.0.0.1:25,connect-timeout=5"
+    user: "10001:10001"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=4m,mode=1777"]
+    mem_limit: 32m
+    cpus: 0.25
+    pids_limit: 32
+    restart: unless-stopped
+    stop_grace_period: 10s
+    healthcheck:
+      test:
+        - CMD-SHELL
+        # Host-origin traffic to a Docker bridge is SNATed on this server and
+        # correctly rejected by the source range. Check the bound listener and
+        # host MTA here; release smoke probes the full path from a Phone caller.
+        - "netstat -ltn | grep -F '${PHONE_SMTP_BIND_ADDRESS}:1587 ' >/dev/null && printf 'QUIT\\r\\n' | socat -T3 -t3 - TCP4:127.0.0.1:25,connect-timeout=2 | grep '^220 ' >/dev/null"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

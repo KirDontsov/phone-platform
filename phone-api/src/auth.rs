@@ -13,6 +13,11 @@ use diesel::{
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
+mod registration;
+
+pub async fn registration_maintenance(state: &AppState) -> Result<(), ApiError> {
+    state.db(registration::cleanup).await
+}
 
 pub const COOKIE: &str = "phone_session";
 pub fn random_token() -> String {
@@ -370,7 +375,7 @@ pub async fn send_mail(to: &str, subject: &str, body: &str) -> Result<(), ApiErr
     } else {
         AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&host)
     };
-    let mut builder = builder.port(port);
+    let mut builder = builder.port(port).timeout(Some(std::time::Duration::from_secs(10)));
     if let (Ok(user), Ok(password)) = (std::env::var("SMTP_USER"), std::env::var("SMTP_PASSWORD")) {
         builder = builder.credentials(lettre::transport::smtp::authentication::Credentials::new(
             user, password,
@@ -612,7 +617,10 @@ async fn revoke_invite(
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
-    cfg.route("/api/auth/login", web::post().to(login))
+    cfg.route("/api/auth/register", web::post().to(registration::register))
+        .route("/api/auth/verify-email", web::post().to(registration::verify))
+        .route("/api/auth/resend-verification", web::post().to(registration::resend))
+        .route("/api/auth/login", web::post().to(login))
         .route("/api/auth/me", web::get().to(me))
         .route("/api/auth/logout", web::post().to(logout))
         .route("/api/auth/organization", web::post().to(switch_org))

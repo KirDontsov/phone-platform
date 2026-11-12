@@ -64,6 +64,9 @@ async fn main() -> std::io::Result<()> {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
+                if phone_api::auth::registration_maintenance(&maintenance_state).await.is_err() {
+                    eprintln!("registration_maintenance_failed");
+                }
                 if phone_api::assistant::maintenance(&maintenance_state)
                     .await
                     .is_err()

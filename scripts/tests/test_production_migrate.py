@@ -203,7 +203,7 @@ process.stdout.write('v1.'+Buffer.concat([nonce,body,cipher.getAuthTag()]).toStr
 
     def test_production_tmpfs_modes_are_single_valid_mount_specs(self):
         # Parse with actual Compose, without any project runtime env or provider credentials.
-        runtime=self.root/'empty.env';migration.write_once(runtime,'')
+        runtime=self.root/'empty.env';migration.write_once(runtime,'PHONE_SMTP_BIND_ADDRESS=172.29.250.1\nPHONE_SMTP_ALLOWED_RANGE=172.29.250.0/24\n')
         config=SOURCE.parents[1]/'infra/compose.production.yml'
         result=subprocess.run(['docker','compose','--env-file',str(runtime),'-f',str(config),
                               'config','--no-consistency','--format','json'],capture_output=True,text=True)
@@ -211,6 +211,31 @@ process.stdout.write('v1.'+Buffer.concat([nonce,body,cipher.getAuthTag()]).toStr
         services=json.loads(result.stdout)['services']
         self.assertEqual(services['api']['tmpfs'],['/tmp:size=64m,mode=1777'])
         self.assertEqual(services['worker']['tmpfs'],['/tmp:size=512m,mode=1777'])
+
+    def test_production_smtp_bridge_is_private_bounded_and_credential_free(self):
+        runtime=self.root/'smtp-fixture.env'
+        migration.write_once(runtime,'PHONE_SMTP_BIND_ADDRESS=172.29.250.1\nPHONE_SMTP_ALLOWED_RANGE=172.29.250.0/24\n')
+        config=SOURCE.parents[1]/'infra/compose.production.yml'
+        result=subprocess.run(['docker','compose','--env-file',str(runtime),'-f',str(config),
+                              'config','--no-consistency','--format','json'],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,'fixture Compose parse failed')
+        service=json.loads(result.stdout)['services']['smtp-relay']
+        self.assertEqual(service['network_mode'],'host')
+        self.assertEqual(service['user'],'10001:10001')
+        self.assertTrue(service['read_only'])
+        self.assertEqual(service['cap_drop'],['ALL'])
+        self.assertIn('no-new-privileges:true',service['security_opt'])
+        self.assertLessEqual(int(service['mem_limit']),32*1024*1024)
+        self.assertLessEqual(int(service['pids_limit']),32)
+        self.assertFalse(service.get('ports'))
+        self.assertFalse(service.get('volumes'))
+        self.assertFalse(service.get('environment'))
+        listener=service['command'][-2]
+        self.assertIn('bind=172.29.250.1,',listener)
+        self.assertIn('range=172.29.250.0/24',listener)
+        self.assertIn('max-children=8',listener)
+        self.assertEqual(service['command'][-1],'TCP4:127.0.0.1:25,connect-timeout=5')
+        self.assertIn('@sha256:',service['image'])
 
 
 @unittest.skipUnless(os.environ.get('PHONE_MIGRATION_TEST_DATABASE'),'explicit disposable PostgreSQL fixture required')

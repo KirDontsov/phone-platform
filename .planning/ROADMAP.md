@@ -157,3 +157,10 @@ Research→independentPLAN-CHECK PASS0/3→execute→independentreview/fixes→v
 **Depends on:** Phases10,11,13,14. Phase12paused.
 **Plan:**15-01 source-only amd64 release; protected first transfer; own nginx/TLS and real tunnel; independent verifier/UAT/GitHub.
 Research→independentPLAN-CHECK PASS0/3→execute completed→independentreview/fixes→independentverifier PASS→automatedUAT PASS, humanUAT pending. Production15-5789727 healthy; публичные API/browser и настоящий tunnel PASS, cutover finalized. Known demo passwords заменены, новые находятся только в локальном0600 secrets/production-access.json; encryption key/Codex generation сохраняются. Другие приложения и shared cache не меняются. Финальная ownerUAT и реальная ASR quality отдельно от TLS/tunnel health.
+
+### Phase16: Public Registration / Email Confirmation
+
+**Goal:** public/register → настоящее письмо с6digitcode → подтверждение → свояизолированнаякомпания/owner/session.
+**Depends on:** Phases2,15; phase12paused.
+**Plan:**16-01 pendingverificationAPI+v2migration; register/verifyUI; ownSMTPtransport/release/UAT.
+Research→PLAN-CHECKoriginalsupersededuseremailrequirement→revision1PASS→execute→independentreviewPASS. BackendrealPG/SMTP8/8,frontend90/90,realMailpitChrome2/2PASS. Releasebuild/prodverifierpending. No SMTPskip/fakeverification, no identity beforeOTP; browserbinding/passwordfallback preventsunsolicitedmailpre-hijack.

@@ -64,6 +64,9 @@ impl From<diesel::result::Error> for DbError {
 pub fn create_pool(url: &str) -> Result<Pool> {
     Pool::builder()
         .max_size(12)
+        // Warm one connection at startup; expand to the same capacity on demand.
+        // Waiting for all twelve cold connections can exceed the startup deadline.
+        .min_idle(Some(1))
         .connection_timeout(Duration::from_secs(10))
         .build(ConnectionManager::<PgConnection>::new(url))
         .map_err(|_| DbError::Unavailable)
@@ -91,6 +94,11 @@ pub fn migrate(pool: &Pool) -> Result<()> {
         if !exists {
             conn.batch_execute(include_str!("../migrations/0001_access/up.sql"))?;
             diesel::sql_query("INSERT INTO schema_migrations(version) VALUES(1)").execute(conn)?;
+        }
+        let registration=diesel::sql_query("SELECT count(*)::integer AS value FROM schema_migrations WHERE version=2").get_result::<IntRow>(conn)?.value>0;
+        if !registration {
+            conn.batch_execute(include_str!("../migrations/0002_registration/up.sql"))?;
+            diesel::sql_query("INSERT INTO schema_migrations(version) VALUES(2)").execute(conn)?;
         }
         Ok(())
     })

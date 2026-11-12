@@ -2,6 +2,8 @@ import {createRouter,createWebHistory} from 'vue-router'
 import {useAuth} from './entities/auth/model'
 const router=createRouter({history:createWebHistory(),routes:[
 {path:'/login',component:()=>import('./pages/auth/AuthPage.vue'),meta:{public:true}},
+{path:'/register',component:()=>import('./pages/auth/AuthPage.vue'),meta:{public:true}},
+{path:'/verify-email',component:()=>import('./pages/auth/VerifyEmailPage.vue'),meta:{public:true}},
 {path:'/reset',component:()=>import('./pages/auth/AuthPage.vue'),meta:{public:true}},
 {path:'/invite/accept',component:()=>import('./pages/auth/AuthPage.vue'),meta:{public:true}},
 {path:'/',redirect:'/dashboard'},
@@ -14,5 +16,5 @@ const router=createRouter({history:createWebHistory(),routes:[
 {path:'/assistant',component:()=>import('./pages/assistant/AssistantPage.vue')},
 {path:'/operations',component:()=>import('./pages/operations/OperationsPage.vue')},
 {path:'/:pathMatch(.*)*',redirect:'/dashboard'}]})
-router.beforeEach(async to=>{const auth=useAuth();if(!auth.ready)await auth.load();if(!to.meta.public&&!auth.me)return{path:'/login',query:{redirect:to.fullPath}};if(to.path==='/login'&&auth.me)return'/dashboard'})
+router.beforeEach(async to=>{const auth=useAuth();if(!auth.ready)await auth.load();if(!to.meta.public&&!auth.me)return{path:'/login',query:{redirect:to.fullPath}};if(['/login','/register'].includes(to.path)&&auth.me)return'/dashboard'})
 export default router
