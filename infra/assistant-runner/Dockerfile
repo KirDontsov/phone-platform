@@ -8,6 +8,7 @@ COPY infra/assistant-runner/package.json infra/assistant-runner/package-lock.jso
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && node node_modules/@openai/codex/bin/codex.js --version \
     && npm cache clean --force
+COPY infra/assistant-runner/vendor ./vendor
 COPY infra/assistant-runner/src ./src
 COPY infra/assistant-runner/tests ./tests
 USER 10001:10001

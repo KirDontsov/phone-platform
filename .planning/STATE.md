@@ -70,3 +70,13 @@ Research → 26 plans → независимый PLAN-CHECK → 2 baseline revis
 ## Повторное code review — 2026-11-12
 
 Исправлены: передача названий тегов/статусов модели; сохранение unknown-исхода доставки через ошибку reconciliation/credentials и retry; явное отключение ASR/analysis без demo fallback. Подробнее reviews/IMPLEMENTATION-REVIEW.md, раздел2026-11-12. Свежие worker33 (включая настоящую отдельную PostgreSQL), core15, Python80, frontend20 PASS; новые4 regressions, совокупный набор Rust51 (API2/persistence1 — прежние результаты, не новый повтор). API/worker Docker пересобраны; полный browser13 — прежний baseline, текущий targeted smoke проверяет новые версии анализа и сохранение ручных полей. Короткая пользовательская проверка: docs/uat.md → «Быстрая проверка». Внешние аккаунты не использовались.
+
+## Исправление пользовательского UAT: startup Codex — 2026-11-12
+
+Пользователь вошёл в Codex, но любой prompt падал. Причина: authenticated startup присылает informational remoteControl/status/changed, отсутствовавший в строгой event allowlist. Исправлены известное notification, first-error preservation и safe stage/code diagnostics, API/UI error classes, duplicate connecting status и misleading uncertain для обычных status. Запрет unknown tools/events/RPC сохранён.
+
+Свежие Node19/19 и affected API2/2 PASS, frontend43/43 PASS; native positive/forbiddennegative теперь проходит полный createRunnerHTTP→TurnService, не обходит orchestrator. Реальный запрос через уже подключённый ChatGPT account завершён: gpt-6.1-sol ответил «готово». Проверочный чат удалён, настройки и авторизация сохранены. Прежние заявления model requests0 относятся к baseline до этой live проверки; Телфин/анализ речи/CRM всё ещё не проверялись. Подробности phases/11-configuration-assistant/11-STARTUP-FIX.md.
+
+Дополнительный live MCP дефект также исправлен: модель с tool-search catalog получала настройки как deferred без доступного механизма поиска. Ровно8Phone Platform tools теперь direct-only (`omit_tools_from=[deferred,code_mode]`); встроенные OS/code-mode инструменты по-прежнему выключены. Настоящий get_workspace_configuration через gpt-6.1-sol завершилсяcompleted, revision0 сохранена, контрольный чат удалён. Docker/API/client пересобраны/healthy, пользовательский вход сохранён.
+
+Startup followup закрыт локально: Node20/20 вhost/Docker, knownproductionmodelcatalog +fullorchestrator, forcedOS/JS/edit denied, affectedAPI2/2, frontend43/43. Пользователь затем уточнил новый UXgap: есть логины кабинета и АТС, а неAPIAppIDSecret. Начинается фаза12 — получениеAPIприложения через защищённый PBX onboarding. Текущий API-only способ остаётся advanced, новый пользовательский ввод не должен требовать неизвестных емуAPIполей.

@@ -369,6 +369,14 @@ async fn execute(
                             "assistant_auth_required" => "assistant_auth_required",
                             "assistant_run_cancelled" => "assistant_cancelled",
                             "assistant_response_too_large" => "assistant_output_too_large",
+                            "unexpected_codex_event"
+                            | "forbidden_codex_item"
+                            | "unsupported_runtime_request"
+                            | "unsafe_codex_config"
+                            | "unsafe_codex_environment" => "assistant_protocol_incompatible",
+                            "codex_request_failed" => "assistant_codex_request_failed",
+                            "codex_turn_failed" => "assistant_codex_turn_failed",
+                            "codex_request_timeout" => "assistant_codex_timeout",
                             _ => "assistant_runtime_failed",
                         },
                         "Помощник не завершил запрос. Уже применённые действия видны в истории",

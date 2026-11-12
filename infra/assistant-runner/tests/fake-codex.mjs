@@ -14,6 +14,14 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   }
   if (!message.id) continue;
   const { id, method, params: p } = message;
+  if (
+    mode.startsWith("startup") &&
+    ["initialize", "config/read"].includes(method)
+  )
+    send({
+      method: "remoteControl/status/changed",
+      params: { status: "disabled" },
+    });
   let result = {};
   if (method === "initialize") result = { userAgent: "fake/0.167.2" };
   else if (method === "account/login/start") {
@@ -79,7 +87,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     send({ id, result });
     if (mode === "eof") process.exit(0);
     if (mode === "slow") continue;
-    if (mode === "forbidden") {
+    if (mode === "forbidden" || mode === "startup-forbidden") {
       send({
         method: "item/started",
         params: {
@@ -93,7 +101,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
       });
       continue;
     }
-    if (mode === "unknown") {
+    if (mode === "unknown" || mode === "startup-unknown") {
       send({ method: "new/untrusted/event", params: { secret: "hidden" } });
       continue;
     }

@@ -206,6 +206,13 @@ pub fn run_json(d: &Document) -> Value {
 }
 pub fn event(data: &mut Value, type_: &str, title: &str, status: &str, tool: Option<&str>) {
     let mut events = data["events"].as_array().cloned().unwrap_or_default();
+    if type_ == "status"
+        && events
+            .last()
+            .is_some_and(|e| e["type"] == "status" && e["title"] == title && e["status"] == status)
+    {
+        return;
+    }
     let seq = events.last().and_then(|v| v["seq"].as_u64()).unwrap_or(0) + 1;
     let mut v = json!({"seq":seq,"type":type_,"title":title,"status":status});
     if let Some(tool) = tool {
@@ -256,8 +263,12 @@ pub fn finish(
         if let Some(events) = run.data["events"].as_array_mut() {
             for e in events {
                 if e["status"] == "running" {
-                    if state == "completed" && e["type"] == "status" {
-                        e["status"] = json!("completed");
+                    if e["type"] == "status" {
+                        e["status"] = json!(if state == "completed" {
+                            "completed"
+                        } else {
+                            "failed"
+                        });
                     } else {
                         e["status"] = json!("uncertain");
                         e["summary"] = json!(

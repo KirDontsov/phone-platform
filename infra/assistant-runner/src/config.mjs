@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TOOLS } from "./common.mjs";
+export const MODEL_CATALOG = fileURLToPath(new URL("../vendor/model-catalog.json", import.meta.url));
 export const CODEX_BIN = fileURLToPath(
   new URL("../node_modules/@openai/codex/bin/codex.js", import.meta.url),
 );
@@ -38,10 +39,11 @@ export const DISABLED_FEATURES = [
 ];
 export function configText({ apiUrl, capability, model, probeProvider } = {}) {
   let text =
+    "model_catalog_json = " + JSON.stringify(MODEL_CATALOG) + "\n" +
     (probeProvider
       ? 'model_provider = "offline_probe"\nmodel = "offline-probe"\n'
       : "") +
-    'cli_auth_credentials_store = "file"\napproval_policy = "never"\nsandbox_mode = "read-only"\nweb_search = "disabled"\nproject_doc_max_bytes = 0\nproject_doc_fallback_filenames = []\nfile_opener = "none"\ninclude_environment_context = false\ninclude_apps_instructions = false\ninclude_collaboration_mode_instructions = false\n[history]\npersistence = "none"\n[memories]\ngenerate_memories = false\nuse_memories = false\n[agents]\nenabled = false\n[features]\n';
+    'cli_auth_credentials_store = "file"\napproval_policy = "never"\nsandbox_mode = "read-only"\nweb_search = "disabled"\nproject_doc_max_bytes = 0\nproject_doc_fallback_filenames = []\nfile_opener = "none"\ninclude_environment_context = false\ninclude_apps_instructions = false\ninclude_collaboration_mode_instructions = false\n[tools.experimental_request_user_input]\nenabled = false\n[history]\npersistence = "none"\n[memories]\ngenerate_memories = false\nuse_memories = false\n[agents]\nenabled = false\n[features]\n';
   for (const name of DISABLED_FEATURES) text += name + " = false\n";
   if (probeProvider) text += "enable_request_compression = false\n";
   if (capability)
@@ -50,7 +52,7 @@ export function configText({ apiUrl, capability, model, probeProvider } = {}) {
       JSON.stringify(process.execPath) +
       "\nargs = [" +
       JSON.stringify(BRIDGE) +
-      "]\nenabled_tools = " +
+      "]\nomit_tools_from = [\"deferred\", \"code_mode\"]\nenabled_tools = " +
       JSON.stringify(TOOLS) +
       "\nrequired = true\nstartup_timeout_sec = 15\ntool_timeout_sec = 25\n[mcp_servers.phone_platform.env]\nPHONE_ASSISTANT_API_URL = " +
       JSON.stringify(apiUrl) +

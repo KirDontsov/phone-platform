@@ -132,3 +132,5 @@ Unit/component: role visibility; один panel/store для drawer/page; secret
 Скриншоты просмотрены визуально. Desktop1440/document1440; mobile390/document390, composer bottom793<844, JS errors0. Browser test дополнительно уменьшает mobile высоту до 500 и проверяет доступность composer. Machine provenance/metrics: `data/eval/phase11/assistant-main-visual.json`, `assistant-fixture-visual.json`, `frontend-verification.json`.
 
 Финальный пользовательский сценарий: войти владельцем → «Помощник» → подключить Codex через свою разрешённую учётную запись/ключ → «Добавить доступы» для Телфина → написать задачу → сверить фактические настройки и историю действий. Настоящие account/device-login/model inference и запросы Телфина требуют локальных доступов; test-wire их не подтверждает.
+
+После live UAT исправлены safe error translations, duplicate connecting events и statusfailed вместо uncertain для обычных этапов подключения. Uncertain остаётся у незавершённых tool actions; обычная ошибка запуска не утверждает, что настройки могли измениться. Свежие frontend43/43 PASS; подробности phase11/11-STARTUP-FIX.md.

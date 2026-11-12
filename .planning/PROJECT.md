@@ -80,3 +80,7 @@ Updated: 2026-11-12
 ## Evolution
 
 После каждой фазы обновлять решения, проверенные требования, ограничения и STATE. Изменения пользовательских ответов распространять на требования, планы и проверки.
+
+## Пользовательский Codex startup — 2026-11-12
+
+Подтверждён вход пользователя в ChatGPT/Codex; исправлены authenticated startup notification, direct MCP visibility и приоритет native model metadata надfeatureflags. Настоящий gpt-6.1-sol завершил обычный ответ и get_workspace_configuration без изменения настроек. Контур остаётся fixed8MCP, без shell/code/edit; known-model native probe добавлен. Полная настройка/Телфин/качество и humanacceptance остаются Pending.

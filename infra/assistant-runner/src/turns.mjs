@@ -13,6 +13,8 @@ import { CodexRpc } from "./rpc.mjs";
 import { configText, INSTRUCTIONS } from "./config.mjs";
 import { writePrivate } from "./storage.mjs";
 const IGNORE = new Set([
+  // Authenticated ChatGPT startup emits status metadata, not a tool or RPC request.
+  "remoteControl/status/changed",
   "thread/started",
   "thread/status/changed",
   "thread/settings/updated",
@@ -150,7 +152,9 @@ export class TurnService {
     let terminal = false,
       rpc,
       threadId,
-      turnId;
+      turnId,
+      failure = null,
+      stage = "initializing";
     const messages = new Map();
     let outputBytes = 0;
     const send = (value) => {
@@ -170,17 +174,21 @@ export class TurnService {
         reject = fail;
       });
       finished.catch(() => {});
+      const fail = (error) => {
+        failure ??= error;
+        reject(error);
+      };
       const stop = () => {
-        reject(new SafeError("assistant_run_cancelled"));
+        fail(new SafeError("assistant_run_cancelled"));
         void rpc.dispose();
       };
       job.abort.signal.addEventListener("abort", stop, { once: true });
-      rpc.on("fault", reject);
+      rpc.on("fault", fail);
       rpc.on("closed", () => {
-        if (!terminal) reject(new SafeError("codex_stream_interrupted"));
+        if (!terminal) fail(new SafeError("codex_stream_interrupted"));
       });
       rpc.on("blockedRequest", () =>
-        reject(new SafeError("unsupported_runtime_request")),
+        fail(new SafeError("unsupported_runtime_request")),
       );
       rpc.on("notification", (notification) => {
         try {
@@ -242,12 +250,13 @@ export class TurnService {
           }
           requireValue(IGNORE.has(method), "unexpected_codex_event");
         } catch (error) {
-          reject(error);
+          fail(error);
           void rpc.dispose();
         }
       });
       send({ type: "status", message: "Подключение помощника" });
       await rpc.initialize();
+      stage = "configuration";
       const configuration = await rpc.request("config/read", {
         includeLayers: false,
       });
@@ -258,10 +267,12 @@ export class TurnService {
           configuration.config.features?.plugins === false,
         "unsafe_codex_config",
       );
+      stage = "account";
       const account = await rpc.request("account/read", {
         refreshToken: false,
       });
       requireValue(account.account, "assistant_auth_required", 409);
+      stage = "thread";
       const started = await rpc.request("thread/start", {
         ephemeral: true,
         approvalPolicy: "never",
@@ -291,6 +302,7 @@ export class TurnService {
         conversation: body.history,
         credentials: body.credential_refs,
       });
+      stage = "turn";
       const turn = await rpc.request("turn/start", {
         threadId,
         input: [
@@ -308,7 +320,9 @@ export class TurnService {
         summary: "none",
       });
       turnId = turn.turn?.id;
+      stage = "response";
       const result = await finished;
+      stage = "credentials_refresh";
       await this.storage.lock(job.org, async () => {
         const state = await this.storage.read(job.org);
         requireValue(
@@ -326,12 +340,13 @@ export class TurnService {
         ...(job.model ? { model: job.model } : {}),
       });
     } catch (error) {
-      send({
-        type: "error",
-        code: job.abort.signal.aborted
-          ? "assistant_run_cancelled"
-          : safeCode(error),
-      });
+      const code = job.abort.signal.aborted
+        ? "assistant_run_cancelled"
+        : safeCode(failure ?? error);
+      process.stderr.write(
+        JSON.stringify({ event: "assistant_turn_failed", run_id: job.id, stage, code }) + "\n",
+      );
+      send({ type: "error", code });
     } finally {
       clearTimeout(timer);
       if (job.abort.signal.aborted && threadId && turnId && !rpc?.closed) {

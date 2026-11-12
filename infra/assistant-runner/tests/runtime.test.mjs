@@ -148,11 +148,32 @@ test("fresh turn has exactly one terminal, Unicode text and no diagnostics/secre
   assert.ok(!response.text.includes(auth.api_key));
   assert.deepEqual(await fs.readdir(path.join(app.directory, "temp")), []);
 });
+test("authenticated startup informational notifications before initialize/config responses retain a completed turn", async (t) => {
+  const app = await setup(t, { mode: "startup" });
+  const auth = loginBody();
+  assert.equal((await post(app, "/auth/start", auth)).status, 200);
+  const response = await post(app, "/turn", turnBody(auth));
+  assert.equal(response.status, 200);
+  const events = response.text.trim().split("\n").map(JSON.parse);
+  assert.deepEqual(events.at(-1), {
+    type: "completed",
+    text: "Готово",
+    model: "fake-model",
+  });
+  assert.equal(
+    events.filter((v) => ["completed", "error"].includes(v.type)).length,
+    1,
+  );
+  assert.ok(!response.text.includes("remoteControl"));
+  assert.deepEqual(await fs.readdir(path.join(app.directory, "temp")), []);
+});
 for (const [mode, code] of [
   ["eof", "codex_stream_interrupted"],
   ["forbidden", "forbidden_codex_item"],
   ["unknown", "unexpected_codex_event"],
   ["request", "unsupported_runtime_request"],
+  ["startup-forbidden", "forbidden_codex_item"],
+  ["startup-unknown", "unexpected_codex_event"],
 ])
   test("fail closed: " + mode, async (t) => {
     const app = await setup(t, { mode });

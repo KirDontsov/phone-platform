@@ -1612,7 +1612,59 @@ async fn assistant_durable_partials_submission_replay_and_malformed_stream_fail_
             "{label} stream became success: {failed}"
         );
         assert!(failed["run"]["error_code"].is_string());
+        assert_eq!(failed["run"]["error_code"], "assistant_protocol_error", "{label} must retain protocol failure instead of becoming a success or a generic startup error");
+        assert!(failed["run"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["type"] == "status")
+            .all(|event| event["status"] == "failed"));
         assert_no_secrets(&failed);
+    }
+    h.cleanup().await;
+}
+
+#[actix_web::test]
+#[ignore = "requires isolated PostgreSQL TEST_DATABASE_URL; startup protocol diagnostics, no model"]
+async fn assistant_runner_startup_status_deduplication_and_safe_error_codes() {
+    let _serial = SERIAL.lock().unwrap();
+    let h = Harness::new().await;
+    let owner = h.login(&h.owner_email).await;
+    h.authorize(&owner).await;
+    for (wire_code, public_code) in [
+        ("unexpected_codex_event", "assistant_protocol_incompatible"),
+        ("forbidden_codex_item", "assistant_protocol_incompatible"),
+        ("unsupported_runtime_request", "assistant_protocol_incompatible"),
+        ("unsafe_codex_config", "assistant_protocol_incompatible"),
+        ("unsafe_codex_environment", "assistant_protocol_incompatible"),
+        ("codex_request_failed", "assistant_codex_request_failed"),
+        ("codex_turn_failed", "assistant_codex_turn_failed"),
+        ("codex_request_timeout", "assistant_codex_timeout"),
+        ("untrusted_future_error", "assistant_runtime_failed"),
+    ] {
+        let conversation = h.conversation(&owner).await;
+        let (run, _) = h.run(&owner, conversation, vec![]).await;
+        for _ in 0..3 {
+            h.fixture.emit(run, json!({"type":"status","message":"Подключаем Codex"}));
+        }
+        h.fixture.emit(run, json!({"type":"status","message":"Проверяем конфигурацию"}));
+        // Repeated titles separated by a different status are genuine progress,
+        // unlike an exact consecutive duplicate notification.
+        h.fixture.emit(run, json!({"type":"status","message":"Подключаем Codex"}));
+        h.fixture.emit(run, json!({"type":"error","code":wire_code,"stage":"config/read","message":KEY_SENTINEL,"diagnostics":TELPHIN_SENTINEL}));
+        h.fixture.finish(run, json!({"type":"error","code":"untrusted_secondary_cleanup_error"}));
+        let failed = h.terminal(&owner, run).await;
+        assert_eq!(failed["run"]["state"], "failed", "{wire_code}: {failed}");
+        assert_eq!(failed["run"]["error_code"], public_code, "Original safe error code must survive secondary cleanup/EOF: {wire_code}");
+        let events = failed["run"]["events"].as_array().unwrap();
+        assert_eq!(events.iter().filter(|event| event["type"] == "status" && event["title"] == "Подключаем Codex").count(), 2, "Exact consecutive connecting statuses should collapse, while later genuine progress remains");
+        assert_eq!(events.iter().filter(|event| event["type"] == "status" && event["title"] == "Проверяем конфигурацию").count(), 1);
+        assert!(events.iter().filter(|event| event["type"] == "status").all(|event| event["status"] == "failed"), "Failed startup statuses must be failed, not uncertain: {events:?}");
+        assert!(events.iter().all(|event| event["type"] != "tool"), "Startup failure must not invent a tool action");
+        assert!(failed["messages"].as_array().unwrap().iter().filter(|message| message["role"] == "assistant").all(|message| message["status"] == "failed"));
+        assert_no_secrets(&failed);
+        let detail = h.request(Method::GET, &format!("/api/assistant/conversations/{conversation}"), json!({}), Some(&owner)).await.ok();
+        assert_no_secrets(&detail);
     }
     h.cleanup().await;
 }
