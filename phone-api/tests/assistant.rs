@@ -184,6 +184,9 @@ async fn fixture_handler(
     match path.as_str() {
         "/auth/status" => HttpResponse::Ok().json(fixture.status(&org)),
         "/auth/start" => {
+            if value["api_key"] == "synthetic-reauth-denied" {
+                return HttpResponse::ServiceUnavailable().json(json!({"error_code":"fixture_upstream_forbidden"}));
+            }
             let staged = StagedAuth {
                 request: value.clone(),
                 login_id: Uuid::new_v4().to_string(),
@@ -1912,5 +1915,142 @@ async fn support_assistant_browser_fixture() {
     h.authorize(&owner).await;
     eprintln!("ASSISTANT_BROWSER_FIXTURE_READY api=127.0.0.1:18083 runner=127.0.0.1:18084 model=test-wire-fixture (no inference)");
     tokio::signal::ctrl_c().await.unwrap();
+    h.cleanup().await;
+}
+
+#[actix_web::test]
+#[ignore = "requires isolated PostgreSQL TEST_DATABASE_URL; actual reauthorization protocol"]
+async fn assistant_failed_reauthorization_preserves_active_authority_until_promoted_commit_and_logout_revokes_both(
+) {
+    let _serial = SERIAL.lock().unwrap();
+    let h = Harness::new().await;
+    let owner = h.login(&h.owner_email).await;
+    h.authorize(&owner).await;
+    let control_id = Uuid::new_v5(&h.org, b"assistant-auth-control");
+    let previous = persistence::get_document(&mut connection(&h.pool).unwrap(), h.org, control_id)
+        .unwrap()
+        .unwrap()
+        .data;
+    let conversation = h.conversation(&owner).await;
+    let (run, token) = h.run(&owner, conversation, vec![]).await;
+    let failure = h
+        .request(
+            Method::POST,
+            "/api/assistant/auth/start",
+            json!({"type":"apiKey","api_key":"synthetic-reauth-denied"}),
+            Some(&owner),
+        )
+        .await;
+    assert_eq!(failure.status, 503);
+    let after = persistence::get_document(&mut connection(&h.pool).unwrap(), h.org, control_id)
+        .unwrap()
+        .unwrap()
+        .data;
+    assert_eq!(after["authenticated"], true);
+    assert_eq!(
+        after["confirmed_generation"],
+        previous["confirmed_generation"]
+    );
+    assert_eq!(after["generation"], previous["generation"]);
+    assert_eq!(after["pending_attempt"], Value::Null);
+    let status = h
+        .request(
+            Method::GET,
+            "/api/assistant/status",
+            json!({}),
+            Some(&owner),
+        )
+        .await
+        .ok();
+    assert_eq!(status["authenticated"], true);
+    h.tool(
+        &token,
+        "after-failed-reauth",
+        "get_workspace_configuration",
+        json!({}),
+    )
+    .await
+    .ok();
+    h.request(
+        Method::POST,
+        "/api/assistant/auth/start",
+        json!({"type":"chatgptDeviceCode"}),
+        Some(&owner),
+    )
+    .await
+    .ok();
+    let attempt = h.fixture.last_attempt();
+    for phase in ["prepare", "commit"] {
+        let response=h.client.post(format!("{}/api/assistant/auth/complete",h.api)).bearer_auth(attempt["authorization_token"].as_str().unwrap()).json(&json!({"auth_attempt_id":attempt["auth_attempt_id"],"generation":attempt["generation"],"phase":phase})).send().await.unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        let receipt: Value = response.json().await.unwrap();
+        assert_eq!(receipt["data"]["committed"], phase == "commit");
+        let current =
+            persistence::get_document(&mut connection(&h.pool).unwrap(), h.org, control_id)
+                .unwrap()
+                .unwrap()
+                .data;
+        if phase == "prepare" {
+            assert_eq!(
+                current["confirmed_generation"],
+                previous["confirmed_generation"]
+            );
+            h.tool(
+                &token,
+                "after-prepare",
+                "get_workspace_configuration",
+                json!({}),
+            )
+            .await
+            .ok();
+        } else {
+            assert_eq!(current["confirmed_generation"], attempt["generation"]);
+            assert_eq!(current["pending_attempt"], Value::Null);
+        }
+    }
+    let cancelled = h
+        .request(
+            Method::GET,
+            &format!("/api/assistant/runs/{run}"),
+            json!({}),
+            Some(&owner),
+        )
+        .await
+        .ok();
+    assert_eq!(cancelled["run"]["state"], "cancelled");
+    h.tool(
+        &token,
+        "after-committed-switch",
+        "get_workspace_configuration",
+        json!({}),
+    )
+    .await
+    .denied();
+    h.request(
+        Method::POST,
+        "/api/assistant/auth/start",
+        json!({"type":"chatgptDeviceCode"}),
+        Some(&owner),
+    )
+    .await
+    .ok();
+    let pending = h.fixture.last_attempt();
+    h.request(
+        Method::POST,
+        "/api/assistant/auth/logout",
+        json!({}),
+        Some(&owner),
+    )
+    .await
+    .ok();
+    let (status, _) = h.fixture.complete(&pending).await;
+    assert!((400..500).contains(&status));
+    let revoked = persistence::get_document(&mut connection(&h.pool).unwrap(), h.org, control_id)
+        .unwrap()
+        .unwrap()
+        .data;
+    assert_eq!(revoked["authenticated"], false);
+    assert_eq!(revoked["confirmed_generation"], Value::Null);
+    assert_eq!(revoked["pending_attempt"], Value::Null);
     h.cleanup().await;
 }

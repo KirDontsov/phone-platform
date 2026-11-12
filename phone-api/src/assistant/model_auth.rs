@@ -14,6 +14,29 @@ fn next_generation(previous: i64, remote: i64) -> i64 {
         .max(remote.saturating_add(1))
         .min(9_007_199_254_740_991)
 }
+fn latest_generation(value: &Value) -> i64 {
+    ["generation", "pending_generation", "last_generation"]
+        .iter()
+        .filter_map(|k| value[*k].as_i64())
+        .max()
+        .unwrap_or(0)
+}
+fn stage_control(previous: Option<&Value>, user: Uuid, attempt: Uuid, generation: i64) -> Value {
+    let mut data = previous.cloned().unwrap_or_else(
+        || json!({"user_id":user,"generation":0,"authenticated":false,"confirmed_generation":null}),
+    );
+    data["pending_attempt"] = json!(attempt);
+    data["pending_generation"] = json!(generation);
+    data
+}
+fn commit_control(data: &mut Value, user: Uuid, generation: i64) {
+    data["user_id"] = json!(user);
+    data["generation"] = json!(generation);
+    data["authenticated"] = json!(true);
+    data["confirmed_generation"] = json!(generation);
+    data["pending_attempt"] = Value::Null;
+    data["pending_generation"] = Value::Null;
+}
 fn unavailable(code: &str) -> Value {
     json!({"available":std::env::var("ASSISTANT_RUNNER_TOKEN").is_ok_and(|v|!v.is_empty()),"runner_ready":false,"authenticated":false,"auth_mode":null,"codex_version":null,"model":null,"error_code":code,"pending_login":null})
 }
@@ -39,13 +62,17 @@ pub async fn status(state: &AppState, ctx: &sessions::Context) -> Result<Value, 
             .and_then(|s| Uuid::parse_str(s).ok())
         {
             let context = ctx.clone();
-            let remote_generation = raw["generation"].clone();
+            let remote_generation = raw
+                .get("pending_generation")
+                .filter(|v| v.is_i64())
+                .unwrap_or(&raw["generation"])
+                .clone();
             let allowed = state
                 .db(move |c| {
                     let d = store::document(c, &context, id, store::AUTH_ATTEMPT).ok();
                     Ok(d.is_some_and(|d| {
                         d.data["session_hash"] == context.token_hash
-                            && d.data["state"] == "pending"
+                            && matches!(d.data["state"].as_str(), Some("pending" | "prepared"))
                             && store::valid_deadline(&d.data)
                             && d.data["generation"] == remote_generation
                     }))
@@ -160,20 +187,19 @@ async fn start(
     };
     let org = ctx.organization_id;
     let remote = runtime::rpc("/auth/status", json!({"organization_id":org}), 5).await?;
-    let remote_gen = remote["generation"].as_i64().unwrap_or(0);
+    let remote_gen = latest_generation(&remote);
     let token = sessions::random_token();
     let hash = sessions::hash(&token);
     let context = ctx.clone();
     let requested = type_.clone();
-    let(attempt,generation,runs)=state.db(move|c|c.transaction::<_,ApiError,_>(|c|{
+    let(attempt,generation)=state.db(move|c|c.transaction::<_,ApiError,_>(|c|{
   settings::lock_settings_revision(c,context.organization_id)?;store::live_context(c,context.organization_id,context.user_id,&context.token_hash,true)?;
-  let id=control_id(context.organization_id);let old=persistence::get_document(c,context.organization_id,id)?;let generation=next_generation(old.as_ref().and_then(|d|d.data["generation"].as_i64()).unwrap_or(0),remote_gen);
+  let id=control_id(context.organization_id);let old=persistence::get_document(c,context.organization_id,id)?;let generation=next_generation(old.as_ref().map(|d|latest_generation(&d.data)).unwrap_or(0),remote_gen);
   if let Some(previous)=old.as_ref().and_then(|d|d.data["pending_attempt"].as_str()).and_then(|s|Uuid::parse_str(s).ok()){if let Some(mut previous)=persistence::get_document(c,context.organization_id,previous)?{previous.data["state"]=json!("revoked");previous.data.as_object_mut().unwrap().remove("capability_hash");let data=previous.data.clone();store::save(c,previous,data)?;}}
-  let attempt=Uuid::new_v4();persistence::save_document(c,context.organization_id,id,store::AUTH_CONTROL,None,json!({"user_id":context.user_id,"generation":generation,"authenticated":false,"confirmed_generation":null,"pending_attempt":attempt}),old.as_ref().map(|d|d.version))?;
+  let attempt=Uuid::new_v4();persistence::save_document(c,context.organization_id,id,store::AUTH_CONTROL,None,stage_control(old.as_ref().map(|d|&d.data),context.user_id,attempt,generation),old.as_ref().map(|d|d.version))?;
   persistence::save_document(c,context.organization_id,attempt,store::AUTH_ATTEMPT,Some(id),json!({"user_id":context.user_id,"session_hash":context.token_hash,"generation":generation,"capability_hash":hash,"state":"pending","type":requested,"expires_at":Utc::now()+Duration::minutes(10)}),None)?;
-  let runs=revoke_runs(c,context.organization_id)?;settings::audit(c,&context,"assistant.auth_started",Some(attempt),json!({"type":requested}))?;Ok((attempt,generation,runs))
+  settings::audit(c,&context,"assistant.auth_started",Some(attempt),json!({"type":requested}))?;Ok((attempt,generation))
  })).await?;
-    stop_runs(org, runs).await;
     let mut payload = json!({"organization_id":org,"auth_attempt_id":attempt,"generation":generation,"authorization_token":token,"type":type_});
     if let Some(key) = key {
         payload["api_key"] = json!(key);
@@ -183,14 +209,18 @@ async fn start(
         state
             .db(move |c| {
                 if let Some(mut d) = persistence::get_document(c, org, attempt)? {
+                    if d.data["state"] == "committed" {
+                        return Ok(());
+                    }
                     d.data["state"] = json!("failed");
                     d.data.as_object_mut().unwrap().remove("capability_hash");
                     let data = d.data.clone();
                     store::save(c, d, data)?;
                 }
                 if let Some(mut control) = persistence::get_document(c, org, control_id(org))? {
-                    if control.data["generation"] == generation {
-                        control.data["authenticated"] = json!(false);
+                    if control.data["pending_generation"] == generation {
+                        control.data["pending_attempt"] = Value::Null;
+                        control.data["pending_generation"] = Value::Null;
                         let data = control.data.clone();
                         store::save(c, control, data)?;
                     }
@@ -215,7 +245,9 @@ async fn start(
                 c.transaction::<_, ApiError, _>(|c| {
                     settings::lock_settings_revision(c, org)?;
                     if let Some(mut d) = persistence::get_document(c, org, attempt)? {
-                        if d.data["generation"] == generation && d.data["state"] == "pending" {
+                        if d.data["generation"] == generation
+                            && matches!(d.data["state"].as_str(), Some("pending" | "prepared"))
+                        {
                             d.data["login_id"] = json!(login_id);
                             let data = d.data.clone();
                             store::save(c, d, data)?;
@@ -260,10 +292,7 @@ async fn revoke(
             ));
         }
     }
-    let remote_gen = remote
-        .as_ref()
-        .and_then(|d| d["generation"].as_i64())
-        .unwrap_or(0);
+    let remote_gen = remote.as_ref().map(latest_generation).unwrap_or(0);
     let context = ctx.clone();
     let expected_login = login.clone();
     let(generation,runs)=state.db(move|c|c.transaction::<_,ApiError,_>(|c|{
@@ -272,11 +301,11 @@ async fn revoke(
   if let Some(login)=expected_login.as_ref(){
     let pending=old.as_ref().and_then(|d|d.data["pending_attempt"].as_str()).and_then(|id|Uuid::parse_str(id).ok());
     let pending=match pending{Some(id)=>persistence::get_document(c,context.organization_id,id)?,None=>None};
-    if !pending.is_some_and(|d|d.data["login_id"]==*login && d.data["state"]=="pending" && d.data["session_hash"]==context.token_hash && store::valid_deadline(&d.data)) {return Err(ApiError::new(409,"login_changed","Попытка входа изменилась"));}
+    if !pending.is_some_and(|d|d.data["login_id"]==*login && matches!(d.data["state"].as_str(),Some("pending"|"prepared")) && d.data["session_hash"]==context.token_hash && store::valid_deadline(&d.data)) {return Err(ApiError::new(409,"login_changed","Попытка входа изменилась"));}
   }
-  let generation=next_generation(old.as_ref().and_then(|d|d.data["generation"].as_i64()).unwrap_or(0),remote_gen);
+  let generation=next_generation(old.as_ref().map(|d|latest_generation(&d.data)).unwrap_or(0),remote_gen);
   if let Some(attempt)=old.as_ref().and_then(|d|d.data["pending_attempt"].as_str()).and_then(|s|Uuid::parse_str(s).ok()){if let Some(mut d)=persistence::get_document(c,context.organization_id,attempt)?{d.data["state"]=json!("revoked");d.data.as_object_mut().unwrap().remove("capability_hash");let data=d.data.clone();store::save(c,d,data)?;}}
-  persistence::save_document(c,context.organization_id,id,store::AUTH_CONTROL,None,json!({"user_id":context.user_id,"generation":generation,"authenticated":false,"confirmed_generation":null,"pending_attempt":null}),old.map(|d|d.version))?;
+  persistence::save_document(c,context.organization_id,id,store::AUTH_CONTROL,None,json!({"user_id":context.user_id,"generation":generation,"authenticated":false,"confirmed_generation":null,"pending_attempt":null,"pending_generation":null}),old.map(|d|d.version))?;
   let runs=revoke_runs(c,context.organization_id)?;settings::audit(c,&context,"assistant.auth_revoked",Some(id),json!({}))?;Ok((generation,runs))
  })).await?;
     stop_runs(org, runs).await;
@@ -304,71 +333,50 @@ async fn complete(
     body: web::Json<Value>,
 ) -> Result<HttpResponse, ApiError> {
     let hash = store::bearer(&req)?;
-    store::strict_keys(&body, &["auth_attempt_id", "generation"])?;
+    store::strict_keys(&body, &["auth_attempt_id", "generation", "phase"])?;
     let id = crate::id_field(&body, "auth_attempt_id")?;
     let generation = body["generation"]
         .as_i64()
         .ok_or_else(|| ApiError::bad("Неверная версия авторизации"))?;
-    let result = state
-        .db(move |c| {
-            c.transaction::<_, ApiError, _>(|c| {
-                let candidate = store::capability(c, &hash, store::AUTH_ATTEMPT)?;
-                if candidate.id != id {
-                    return Err(ApiError::forbidden());
-                }
-                settings::lock_settings_revision(c, candidate.organization_id)?;
-                store::lock_document(
-                    c,
-                    candidate.organization_id,
-                    control_id(candidate.organization_id),
-                )?;
-                store::lock_document(c, candidate.organization_id, id)?;
-                let attempt = persistence::get_document(c, candidate.organization_id, id)?
-                    .ok_or_else(ApiError::missing)?;
-                let mut control = persistence::get_document(
-                    c,
-                    attempt.organization_id,
-                    control_id(attempt.organization_id),
-                )?
-                .ok_or_else(ApiError::missing)?;
-                if !matches!(attempt.data["state"].as_str(), Some("pending" | "approved"))
-                    || attempt.data["capability_hash"] != hash
-                    || attempt.data["generation"] != generation
-                    || control.data["generation"] != generation
-                    || !store::valid_deadline(&attempt.data)
-                {
-                    return Err(ApiError::new(
-                        403,
-                        "assistant_authorization_revoked",
-                        "Попытка входа отозвана",
-                    ));
-                }
-                let user = crate::id_field(&attempt.data, "user_id")?;
-                let context = store::live_context(
-                    c,
-                    attempt.organization_id,
-                    user,
-                    attempt.data["session_hash"]
-                        .as_str()
-                        .ok_or_else(ApiError::missing)?,
-                    true,
-                )?;
-                if attempt.data["state"] == "approved" {
-                    return Ok(json!({"approved":true,"generation":generation}));
-                }
-                let mut data = attempt.data.clone();
-                data["state"] = json!("approved");
-                store::save(c, attempt, data)?;
-                control.data["authenticated"] = json!(true);
-                control.data["confirmed_generation"] = json!(generation);
-                control.data["pending_attempt"] = Value::Null;
-                let data = control.data.clone();
-                store::save(c, control, data)?;
-                settings::audit(c, &context, "assistant.auth_connected", Some(id), json!({}))?;
-                Ok(json!({"approved":true,"generation":generation}))
-            })
-        })
-        .await?;
+    let phase = match body.get("phase") {
+        None => "commit",
+        Some(Value::String(value)) => value.as_str(),
+        Some(_) => return Err(ApiError::bad("Неверная стадия подключения")),
+    }
+    .to_owned();
+    if !["prepare", "commit", "status"].contains(&phase.as_str()) {
+        return Err(ApiError::bad("Неверная стадия подключения"));
+    }
+    let (result,org,runs) = state.db(move|c|c.transaction::<_,ApiError,_>(|c|{
+        let candidate=store::capability(c,&hash,store::AUTH_ATTEMPT)?;
+        if candidate.id!=id{return Err(ApiError::forbidden());}
+        let org=candidate.organization_id;
+        settings::lock_settings_revision(c,org)?;
+        store::lock_document(c,org,control_id(org))?;store::lock_document(c,org,id)?;
+        let attempt=persistence::get_document(c,org,id)?.ok_or_else(ApiError::missing)?;
+        let mut control=persistence::get_document(c,org,control_id(org))?.ok_or_else(ApiError::missing)?;
+        let committed=attempt.data["state"]=="committed" && control.data["generation"]==generation && control.data["confirmed_generation"]==generation && control.data["authenticated"]==true;
+        let pending=control.data["pending_generation"]==generation && control.data["pending_attempt"]==id.to_string();
+        if !matches!(attempt.data["state"].as_str(),Some("pending"|"prepared"|"approved"|"committed")) || attempt.data["capability_hash"]!=hash || attempt.data["generation"]!=generation || (!pending && !committed) || !store::valid_deadline(&attempt.data) {
+            return Err(ApiError::new(403,"assistant_authorization_revoked","Попытка входа отозвана"));
+        }
+        let user=crate::id_field(&attempt.data,"user_id")?;
+        let context=store::live_context(c,org,user,attempt.data["session_hash"].as_str().ok_or_else(ApiError::missing)?,true)?;
+        if phase=="status" {return Ok((json!({"approved":true,"generation":generation,"committed":committed,"active_generation":control.data["generation"]}),org,vec![]));}
+        if committed {return Ok((json!({"approved":true,"generation":generation,"committed":true}),org,vec![]));}
+        let mut data=attempt.data.clone();
+        if phase=="prepare" {
+            data["state"]=json!("prepared");store::save(c,attempt,data)?;
+            return Ok((json!({"approved":true,"generation":generation,"committed":false}),org,vec![]));
+        }
+        data["state"]=json!("committed");store::save(c,attempt,data)?;
+        commit_control(&mut control.data,user,generation);
+        let data=control.data.clone();store::save(c,control,data)?;
+        let runs=revoke_runs(c,org)?;
+        settings::audit(c,&context,"assistant.auth_connected",Some(id),json!({}))?;
+        Ok((json!({"approved":true,"generation":generation,"committed":true}),org,runs))
+    })).await?;
+    stop_runs(org, runs).await;
     Ok(ok(result))
 }
 pub fn configure(c: &mut web::ServiceConfig) {
@@ -377,4 +385,33 @@ pub fn configure(c: &mut web::ServiceConfig) {
         .route("/api/assistant/auth/cancel", web::post().to(revoke))
         .route("/api/assistant/auth/logout", web::post().to(revoke))
         .route("/api/assistant/auth/complete", web::post().to(complete));
+}
+
+#[cfg(test)]
+mod preservation_tests {
+    use super::*;
+    #[test]
+    fn staging_preserves_active_authority_and_only_commit_replaces_it() {
+        let owner = Uuid::new_v4();
+        let requester = Uuid::new_v4();
+        let attempt = Uuid::new_v4();
+        let previous =
+            json!({"user_id":owner,"generation":7,"authenticated":true,"confirmed_generation":7});
+        let mut staged = stage_control(Some(&previous), requester, attempt, 11);
+        assert_eq!(staged["generation"], 7);
+        assert_eq!(staged["confirmed_generation"], 7);
+        assert_eq!(staged["authenticated"], true);
+        assert_eq!(staged["user_id"], owner.to_string());
+        assert_eq!(staged["pending_generation"], 11);
+        assert_eq!(latest_generation(&staged), 11);
+        commit_control(&mut staged, requester, 11);
+        assert_eq!(staged["generation"], 11);
+        assert_eq!(staged["confirmed_generation"], 11);
+        assert_eq!(staged["pending_generation"], Value::Null);
+        assert_eq!(staged["pending_attempt"], Value::Null);
+        let fresh = stage_control(None, owner, attempt, 13);
+        assert_eq!(fresh["authenticated"], false);
+        assert_eq!(fresh["confirmed_generation"], Value::Null);
+        assert_eq!(fresh["generation"], 0);
+    }
 }

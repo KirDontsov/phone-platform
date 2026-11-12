@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createGateway } from './gateway.mjs';
+import { readLocalSettings } from './local-providers.mjs';
 
 const password = process.env.OPENCODE_SERVER_PASSWORD;
 if (!password || password.length < 24) {
@@ -8,11 +9,16 @@ if (!password || password.length < 24) {
   process.exit(1);
 }
 const configPath = '/etc/opencode/opencode.json';
-const config = fs.readFileSync(configPath, 'utf8');
-const gateway = createGateway({ password, config: JSON.parse(config) });
+let localSettings;
+try { localSettings = readLocalSettings('/var/lib/phone-model-providers/providers.json'); }
+catch { process.stderr.write('local_provider_config_invalid\n'); process.exit(1); }
+const baseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+const config = JSON.stringify({ ...baseConfig, provider: { ...baseConfig.provider, ...localSettings?.providers } });
+const gateway = createGateway({ password, config: baseConfig, localSettings });
 for (const path of ['/tmp/runner/home', '/tmp/runner/data', '/tmp/runner/cache', '/tmp/runner/config']) {
   fs.mkdirSync(path, { recursive: true, mode: 0o700 });
 }
+fs.writeFileSync('/tmp/runner/config/opencode.json', config, { mode: 0o600 });
 // A narrow environment prevents accidental inheritance of application DB/broker/session secrets.
 const env = {
   PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
@@ -21,8 +27,7 @@ const env = {
   XDG_CACHE_HOME: '/tmp/runner/cache',
   XDG_CONFIG_HOME: '/tmp/runner/config',
   TMPDIR: '/tmp',
-  OPENCODE_CONFIG: configPath,
-  OPENCODE_CONFIG_CONTENT: config,
+  OPENCODE_CONFIG: '/tmp/runner/config/opencode.json',
   OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
   OPENCODE_DISABLE_DEFAULT_PLUGINS: 'true',
   OPENCODE_DISABLE_MODELS_FETCH: 'true',

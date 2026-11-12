@@ -15,6 +15,7 @@ async fn asr_provider_keys_are_not_reused_and_connector_models_urls_are_validate
     let pool = persistence::create_pool(&std::env::var("TEST_DATABASE_URL").unwrap()).unwrap();
     persistence::migrate(&pool).unwrap();
     let key = [73; 32];
+    std::env::set_var("MODEL_RUNNER_PASSWORD", "synthetic-runtime-pairing-0123456789");
     let suffix = Uuid::new_v4();
     let email = format!("asr-{suffix}@example.test");
     let password = "Synthetic-ASR-only-2026";
@@ -151,6 +152,33 @@ async fn asr_provider_keys_are_not_reused_and_connector_models_urls_are_validate
         version,
         "invalid writes are rolled back"
     );
+    // Full HTTP/PG proof: local credentials are selected without inheriting any API key,
+    // and the organization is derived from the session rather than a supplied config field.
+    let response = put!(json!({"provider":"opencode","credential_source":"local","local_provider":"apinex","model":"apinex/voice-stt","base_url":"http://model-runner:4096","_organization_id":foreign}));
+    assert_eq!(response.status().as_u16(), 200);
+    let saved = phone_api::settings::config_value(&persistence::get_document(&mut c, org, id).unwrap().unwrap(), &key).unwrap();
+    assert!(saved.get("api_key").is_none());
+    assert_eq!(saved["_organization_id"], org.to_string());
+    macro_rules! put_analysis {($config:expr)=>{test::call_service(&app,test::TestRequest::put().uri("/api/connections/analysis").insert_header((header::COOKIE,cookie.clone())).insert_header((header::ORIGIN,"http://localhost")).insert_header(("X-CSRF-Token",csrf)).set_json(json!({"config":$config})).to_request()).await};}
+    let response = put_analysis!(json!({"provider":"opencode","base_url":"http://model-runner:4096/","model":"apinex/free/test","api_key":"synthetic-wrong-previous-provider-key","_organization_id":foreign}));
+    assert_eq!(response.status().as_u16(),200);
+    let public:Value=test::read_body_json(response).await;
+    assert!(!public.to_string().contains("synthetic-runtime-pairing"));
+    let analysis_id=Uuid::new_v5(&org,b"connection:analysis");
+    let local_doc=persistence::get_document(&mut c,org,analysis_id).unwrap().unwrap();
+    let local=phone_api::settings::config_value(&local_doc,&key).unwrap();
+    assert_eq!(local["api_key"],"synthetic-runtime-pairing-0123456789");
+    assert_eq!(local["base_url"],"http://model-runner:4096");
+    assert_eq!(local["_organization_id"],org.to_string());
+    for bad_key in [Value::Null,json!(""),json!("<configured>")] {
+        let response=put_analysis!(json!({"provider":"openai","base_url":"https://other.example/v1","api_key":bad_key}));
+        assert_eq!(response.status().as_u16(),400,"internal pairing cannot follow an external destination");
+    }
+    assert_eq!(persistence::get_document(&mut c,org,analysis_id).unwrap().unwrap().version,local_doc.version);
+    let response=put_analysis!(json!({"provider":"openai","base_url":"https://other.example/v1","api_key":"synthetic-fresh-external-key"}));
+    assert_eq!(response.status().as_u16(),200);
+    let external=phone_api::settings::config_value(&persistence::get_document(&mut c,org,analysis_id).unwrap().unwrap(),&key).unwrap();
+    assert_eq!(external["api_key"],"synthetic-fresh-external-key");
     let response = test::call_service(
         &app,
         test::TestRequest::get()

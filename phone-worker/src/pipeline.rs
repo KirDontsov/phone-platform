@@ -248,8 +248,11 @@ impl Worker {
             let encrypted = doc.data["config_encrypted"]
                 .as_str()
                 .ok_or_else(|| ProviderError::permanent("configuration_missing"))?;
-            let config = contracts::unseal(encrypted, &self.config.encryption_key)
+            let mut config = contracts::unseal(encrypted, &self.config.encryption_key)
                 .map_err(|_| ProviderError::permanent("connection_decryption_failed"))?;
+            if matches!(kind, "asr" | "analysis") {
+                config["_organization_id"] = json!(org);
+            }
             return Ok((Some(doc), config));
         }
         if self.config.demo_mode && matches!(kind, "asr" | "analysis") {

@@ -72,7 +72,15 @@ export function configText({ apiUrl, capability, model, probeProvider } = {}) {
       '\nwire_api = "responses"\nrequires_openai_auth = false\nsupports_websockets = false\n';
   return text;
 }
-export function childEnvironment(home) {
+export function codexProxyEnvironment(runtime = process.env) {
+  if (!runtime.MODEL_RUNNER_URL && !runtime.MODEL_RUNNER_PASSWORD) return {};
+  const url = runtime.MODEL_RUNNER_URL, password = runtime.MODEL_RUNNER_PASSWORD;
+  if (url !== "http://model-runner:4096" || typeof password !== "string" || password.length < 24 || password.length > 4096 || /[\s\x00-\x1f\x7f]/.test(password)) throw new Error("invalid_codex_proxy_configuration");
+  const proxy = "http://opencode:" + encodeURIComponent(password) + "@model-runner:4096";
+  const bypass = "api,assistant-runner,localhost,127.0.0.1,::1";
+  return { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, http_proxy: proxy, https_proxy: proxy, NO_PROXY: bypass, no_proxy: bypass };
+}
+export function childEnvironment(home, { runtime = process.env } = {}) {
   return {
     PATH: path.dirname(process.execPath) + ":/usr/local/bin:/usr/bin:/bin",
     HOME: home,
@@ -81,6 +89,7 @@ export function childEnvironment(home) {
     XDG_CACHE_HOME: path.join(home, "cache"),
     TMPDIR: path.dirname(home),
     LANG: "C.UTF-8",
+    ...codexProxyEnvironment(runtime),
   };
 }
 export const INSTRUCTIONS =

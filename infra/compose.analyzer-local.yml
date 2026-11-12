@@ -35,4 +35,5 @@ services:
       start_period: 15s
       retries: 3
 volumes:
+  local-providers:
   client-state:

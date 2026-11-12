@@ -11,6 +11,7 @@ services:
       - path: ../secrets/model-runner.env
         required: false
     expose: ["4096"]
+    volumes: ["local-providers:/var/lib/phone-model-providers:ro"]
     read_only: true
     user: "10001:10001"
     working_dir: /work
@@ -24,3 +25,6 @@ services:
     pids_limit: 96
     stop_grace_period: 15s
     restart: unless-stopped
+
+volumes:
+  local-providers:

@@ -503,7 +503,7 @@ async fn cancel(
 /// Bounded maintenance is also exposed for verifier tests, never mints authority.
 pub async fn maintenance(state: &AppState) -> Result<(), ApiError> {
     state.db(|c|{
-  let stale=diesel::sql_query("SELECT * FROM documents WHERE kind='assistant_credential' OR(kind='assistant_run' AND data->>'state' IN ('queued','running')) OR(kind='assistant_auth_attempt' AND data->>'state' IN ('pending','approved','revoked','failed')) ORDER BY data->>'expires_at' LIMIT 1000").load::<Document>(c)?;
+  let stale=diesel::sql_query("SELECT * FROM documents WHERE kind='assistant_credential' OR(kind='assistant_run' AND data->>'state' IN ('queued','running')) OR(kind='assistant_auth_attempt' AND data->>'state' IN ('pending','prepared','approved','committed','revoked','failed')) ORDER BY data->>'expires_at' LIMIT 1000").load::<Document>(c)?;
   for d in stale{
    if d.kind==store::RUN&&store::active(&d.data)&&!store::valid_deadline(&d.data){store::finish(c,d.organization_id,d.id,"interrupted",Some("assistant_interrupted"),None,None,None)?;runtime::abort(d.organization_id,d.id);}
    if d.kind==store::CREDENTIAL&&(!store::valid_deadline(&d.data)||d.data["consumed"]==true){c.transaction::<_,ApiError,_>(|c|{settings::lock_settings_revision(c,d.organization_id)?;if let Some(parent)=d.parent_id{store::lock_document(c,d.organization_id,parent)?;}persistence::tombstone(c,d.organization_id,d.id,None)?;persistence::delete_document(c,d.organization_id,d.id)?;Ok(())})?;}

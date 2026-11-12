@@ -1,6 +1,8 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { attachCodexProxy } from './codex-proxy.mjs';
+import { LOCAL_ASR_MODEL, localAuthorized, localCatalog, redactNative, apinexTranscript } from './local-providers.mjs';
 
 export const ASR_MODEL_IDS = Object.freeze(['moondream/parakeet-ultra', 'nvidia/nemotron-3.5-transcribe']);
 const UPSTREAM = 'https://openrouter.ai/api/v1';
@@ -135,12 +137,12 @@ function nativeRequest(url, init) {
   });
 }
 /** No provider URL or provider secret comes from configuration/env. fetchImpl is for isolated HTTP fixtures. */
-export function createGateway({ password, config, fetchImpl = fetch, nativeBase = 'http://127.0.0.1:4097', deadlineMs = 55_000, nativeDeadlineMs = 610_000 } = {}) {
+export function createGateway({ password, config, fetchImpl = fetch, nativeBase = 'http://127.0.0.1:4097', deadlineMs = 55_000, nativeDeadlineMs = 610_000, localSettings = null, maxSessions = 128 } = {}) {
   if (typeof password !== 'string' || password.length < 24) throw failure(503, 'runner_auth_required');
   if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(nativeBase)) throw failure(503, 'connector_native_invalid');
   const catalog = modelCatalog(config), expected = Buffer.from('Basic ' + Buffer.from('opencode:' + password).toString('base64'));
-  let inFlight = 0, closing = false;
-  const controllers = new Set();
+  let inFlight = 0, sessionReservations = 0, closing = false;
+  const controllers = new Set(), sessions = new Map();
   const server = http.createServer({ maxHeaderSize: 12 * 1024 }, async (req, res) => {
     if (!authenticated(req, expected)) { req.resume(); send(res, 401, { error: { code: 'runner_auth_required', message: 'runner_auth_required' } }); return; }
     const controller = new AbortController(); controllers.add(controller);
@@ -148,17 +150,54 @@ export function createGateway({ password, config, fetchImpl = fetch, nativeBase 
     req.once('aborted', abortClient); res.once('close', () => { if (!res.writableEnded) abortClient(); });
     const nativeMessage = req.method === 'POST' && /^\/session\/[A-Za-z0-9_-]{1,128}\/message$/.test(req.url);
     const timer = setTimeout(() => controller.abort(failure(504, 'provider_timeout')), nativeMessage ? nativeDeadlineMs : deadlineMs); timer.unref();
-    let counted = false;
+    let counted = false, reservedSession = false;
     try {
       if (closing) throw failure(503, 'connector_unavailable');
       const url = new URL(req.url, 'http://connector');
       if (url.search || url.pathname !== req.url || /%/.test(req.url)) throw failure(422, 'asr_invalid_request');
-      if (url.pathname === '/asr/models' && req.method === 'GET') { send(res, 200, { models: catalog }); return; }
+      const organization = req.headers['x-phone-organization'];
+      const scoped = localAuthorized(localSettings, organization);
+      const localModels = localCatalog(localSettings, organization).asr_models;
+      if (url.pathname === '/local/providers' && req.method === 'GET') { send(res, 200, localCatalog(localSettings, organization)); return; }
+      if (url.pathname === '/local/test' && req.method === 'POST') {
+        if (!scoped) throw failure(403, 'local_provider_not_authorized');
+        const body = await jsonRequest(req, 4096, controller.signal);
+        if (!strictKeys(body, ['model']) || typeof body.model !== 'string') throw failure(422, 'local_model_unavailable');
+        const slash = body.model.indexOf('/'), provider = localSettings.providers[body.model.slice(0, slash)], model = body.model.slice(slash + 1);
+        if (slash < 1 || !provider?.models[model]) throw failure(422, 'local_model_unavailable');
+        const probe = await fetchImpl(provider.options.baseURL + '/models', { method: 'GET', headers: { Authorization: 'Bearer ' + provider.options.apiKey }, redirect: 'error', signal: controller.signal });
+        await checked(probe); const metadata = await boundedJson(probe, controller.signal);
+        if (!Array.isArray(metadata.data) || !metadata.data.some(item => item.id === model)) throw failure(422, 'local_model_unavailable');
+        send(res, 200, { ok: true, model: body.model }); return;
+      }
+      if (url.pathname === '/asr/models' && req.method === 'GET') { send(res, 200, { models: [...catalog, ...localModels] }); return; }
       if (['/asr/test', '/asr/transcriptions'].includes(url.pathname) && req.method === 'POST') {
         if (inFlight >= 2) { req.resume(); throw failure(429, 'asr_busy', 5); }
         inFlight++; counted = true;
-        const key = providerKey(req), body = await jsonRequest(req, url.pathname === '/asr/test' ? 4096 : REQUEST_LIMIT, controller.signal);
-        const model = selectedModel(body, catalog);
+        const body = await jsonRequest(req, url.pathname === '/asr/test' ? 4096 : REQUEST_LIMIT, controller.signal);
+        const local = body.model === LOCAL_ASR_MODEL;
+        if (local && (!scoped || !localModels.length)) throw failure(403, 'local_provider_not_authorized');
+        const model = selectedModel(body, [...catalog, ...localModels]);
+        if (local) {
+          if (req.headers['x-openrouter-api-key'] !== undefined) throw failure(422, 'asr_invalid_request');
+          const provider = localSettings.providers.apinex, headers = { Authorization: 'Bearer ' + provider.options.apiKey };
+          if (url.pathname === '/asr/test') {
+            if (!strictKeys(body, ['model'])) throw failure(422, 'asr_invalid_request');
+            const probe = await fetchImpl(provider.options.baseURL + '/models', { method: 'GET', headers, redirect: 'error', signal: controller.signal });
+            await checked(probe); const metadata = await boundedJson(probe, controller.signal);
+            if (!Array.isArray(metadata.data)) throw failure(502, 'invalid_transcript_response');
+            send(res, 200, { ok: true, model, provider: 'apinex', message: 'Existing local provider authenticated; no audio was submitted.' }); return;
+          }
+          const payload = transcriptionRequest(body, [...catalog, ...localModels]);
+          const mime = { wav: 'audio/wav', mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg', webm: 'audio/webm', aac: 'audio/aac', mp4: 'audio/mp4' }[payload.input_audio.format];
+          const query = new URLSearchParams({ detect_language: 'true', punctuate: 'true', smart_format: 'true', diarize: 'true', utterances: 'true', ...(payload.language ? { language: payload.language } : {}) });
+          const response = await fetchImpl(provider.options.baseURL + '/tools/voice/stt?' + query.toString(), { method: 'POST', headers: { ...headers, 'Content-Type': mime }, body: Buffer.from(payload.input_audio.data, 'base64'), redirect: 'error', signal: controller.signal });
+          await checked(response);
+          let transcript;
+          try { transcript = apinexTranscript(await boundedJson(response, controller.signal)); } catch { throw failure(502, 'invalid_transcript_response'); }
+          send(res, 200, transcriptResponse(transcript)); return;
+        }
+        const key = providerKey(req);
         if (url.pathname === '/asr/test') {
           if (!strictKeys(body, ['model'])) throw failure(422, 'asr_invalid_request');
           const r = await fetchImpl(UPSTREAM + '/key', { method: 'GET', headers: { Authorization: 'Bearer ' + key }, redirect: 'error', signal: controller.signal });
@@ -171,16 +210,35 @@ export function createGateway({ password, config, fetchImpl = fetch, nativeBase 
         await checked(r); send(res, 200, transcriptResponse(await boundedJson(r, controller.signal))); return;
       }
       if (!nativeRoute(req.method, url.pathname)) throw failure(404, 'connector_route_missing');
+      const publicNative = req.method === 'GET' && ['/doc', '/global/health'].includes(url.pathname);
+      if (localSettings && !publicNative && !scoped) throw failure(403, 'local_provider_not_authorized');
+      const sessionId = /^\/session\/([A-Za-z0-9_-]{1,128})(?:\/message)?$/.exec(url.pathname)?.[1];
+      if (localSettings && sessionId && sessions.get(sessionId) !== organization) throw failure(403, 'local_session_not_authorized');
       if (req.headers['x-openrouter-api-key'] !== undefined) throw failure(422, 'asr_invalid_request');
       const body = ['POST', 'DELETE'].includes(req.method) && (req.headers['content-length'] || req.headers['transfer-encoding']) ? await jsonRequest(req, 2 * 1024 * 1024, controller.signal) : undefined;
+      if (localSettings && req.method === 'POST' && url.pathname === '/session') {
+        if (sessions.size + sessionReservations >= maxSessions) throw failure(429, 'connector_session_limit', 5);
+        sessionReservations++; reservedSession = true;
+      }
+      if (localSettings && nativeMessage) {
+        const provider = localSettings.providers[body?.model?.providerID];
+        if (!provider?.models[body?.model?.modelID]) throw failure(422, 'local_model_unavailable');
+      }
       const r = await nativeRequest(nativeBase + url.pathname, { method: req.method, headers: { Authorization: expected.toString(), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: controller.signal });
       if (!r.ok) { await r.body?.cancel(); throw failure(r.status, 'connector_native_request_failed'); }
-      send(res, r.status, await boundedJson(r, controller.signal));
+      const result = await boundedJson(r, controller.signal);
+      if (localSettings && req.method === 'POST' && url.pathname === '/session') {
+        if (typeof result.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(result.id)) throw failure(502, 'connector_invalid_session');
+        sessions.set(result.id, organization);
+      }
+      if (req.method === 'DELETE' && sessionId) sessions.delete(sessionId);
+      send(res, r.status, redactNative(result, localSettings));
     } catch (error) {
       const safe = controller.signal.aborted ? controller.signal.reason : error instanceof GatewayError ? error : failure(502, 'provider_unavailable');
       send(res, safe.status || 502, { error: { code: safe.code || 'provider_unavailable', message: safe.code || 'provider_unavailable' } }, safe.retryAfter);
-    } finally { if (counted) inFlight--; clearTimeout(timer); controllers.delete(controller); req.off('aborted', abortClient); if (!req.complete && !req.destroyed) { req.resume(); res.once('finish', () => req.destroy()); } }
+    } finally { if (reservedSession) sessionReservations--; if (counted) inFlight--; clearTimeout(timer); controllers.delete(controller); req.off('aborted', abortClient); if (!req.complete && !req.destroyed) { req.resume(); res.once('finish', () => req.destroy()); } }
   });
+  const codexProxy = attachCodexProxy(server, { password });
   server.requestTimeout = 60_000; server.headersTimeout = 10_000; server.keepAliveTimeout = 5000; server.maxRequestsPerSocket = 100;
-  return { server, async close() { closing = true; for (const c of controllers) c.abort(failure(503, 'connector_unavailable')); await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }); } };
+  return { server, async close() { closing = true; codexProxy.close(); sessions.clear(); for (const c of controllers) c.abort(failure(503, 'connector_unavailable')); await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }); } };
 }

@@ -625,6 +625,15 @@ pub async fn test_connection(kind: &str, config: &Value) -> Result<Value> {
                     json!({"ok":true,"state":"demo","message":"Демонстрационный адаптер: синтетические данные"}),
                 );
             }
+            if kind == "analysis"
+                && provider == "opencode"
+                && crate::models::normalized_base(config)?
+                    == crate::models::normalized_base(
+                        &json!({"base_url":crate::asr_connector::DEFAULT_URL}),
+                    )?
+            {
+                return crate::asr_connector::test_local_model(config).await;
+            }
             let purpose = if provider == "opencode" {
                 "model"
             } else {

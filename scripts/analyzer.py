@@ -203,7 +203,7 @@ def main():
 6. Здесь: ./start-analyzer.sh pin --jump-public-key ПУБЛИЧНЫЙ_КЛЮЧ_СЕРВЕРА --relay-public-key ПУБЛИЧНЫЙ_КЛЮЧ_RELAY
 7. Заполни SSH host/user в .env.analyzer.local. Повседневный запуск: ./start-analyzer.sh
 Не включай compose.ai.yml на сервере одновременно с relay: DNS model-runner должен указывать только на relay.
-Компьютер должен оставаться включённым. Расшифровка требует отдельного ключа OpenRouter компании.''')
+Компьютер должен оставаться включённым. Можно использовать уже подключённого локального провайдера; OpenRouter настраивается отдельно.''')
         return 0
     config=configuration(require_remote=command in ['up','doctor'])
     read_pair()

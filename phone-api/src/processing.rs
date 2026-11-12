@@ -239,13 +239,16 @@ pub fn providers(
             .filter(|d| d.data["state"] != "disconnected")
             .and_then(|d| d.data["config_encrypted"].as_str())
             .and_then(|encrypted| contracts::unseal(encrypted, key).ok());
-        let config = config.or_else(|| {
+        let mut config = config.or_else(|| {
             if configuration.is_none() && demo {
                 Some(json!({"provider":"demo","model":"demo-synthetic"}))
             } else {
                 None
             }
         });
+        if let Some(config) = config.as_mut() {
+            config["_organization_id"] = json!(org);
+        }
         let reason = match config.as_ref() {
             None => Some("configuration_missing"),
             Some(config) if config["provider"] == "demo" => {
@@ -263,7 +266,9 @@ pub fn providers(
                     ["opencode", "openai", "http"]
                         .contains(&config["provider"].as_str().unwrap_or(""))
                 };
-                let complete = ["model", "base_url", "api_key"].iter().all(|field| {
+                let local = kind == "asr" && config["provider"] == "opencode" && phone_worker::asr_connector::uses_local_credentials(config);
+                let fields: &[&str] = if local { &["model", "base_url"] } else { &["model", "base_url", "api_key"] };
+                let complete = fields.iter().all(|field| {
                     config[*field]
                         .as_str()
                         .is_some_and(|v| !v.trim().is_empty())

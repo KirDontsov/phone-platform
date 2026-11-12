@@ -22,6 +22,9 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
       method: "remoteControl/status/changed",
       params: { status: "disabled" },
     });
+  if (method === "account/login/start" && mode === "login-fail") {
+    send({id,error:{code:-32603,message:"synthetic upstream 403"}});continue;
+  }
   let result = {};
   if (method === "initialize") result = { userAgent: "fake/0.167.2" };
   else if (method === "account/login/start") {

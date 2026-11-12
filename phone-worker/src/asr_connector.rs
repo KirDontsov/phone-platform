@@ -9,6 +9,10 @@ use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
 
 pub const MODELS: [&str; 2] = ["moondream/parakeet-ultra", "nvidia/nemotron-3.5-transcribe"];
+pub const LOCAL_MODEL: &str = "apinex/voice-stt";
+pub fn uses_local_credentials(config: &Value) -> bool {
+    config["credential_source"] == "local"
+}
 pub const DEFAULT_URL: &str = "http://model-runner:4096";
 const MAX_CHUNK: usize = 24 * 1024 * 1024;
 const CHUNK_SECONDS: u32 = 300;
@@ -22,10 +26,18 @@ pub fn validate_config(config: &Value) -> Result<url::Url> {
     if base != expected || base.query().is_some() {
         return Err(ProviderError::permanent("asr_runner_url_mismatch"));
     }
-    if !MODELS.contains(&providers::required(config, "model")?) {
-        return Err(ProviderError::permanent("unsupported_asr_model"));
+    if uses_local_credentials(config) {
+        if config["model"] != LOCAL_MODEL || config["local_provider"] != "apinex" {
+            return Err(ProviderError::permanent("unsupported_asr_model"));
+        }
+        uuid::Uuid::parse_str(providers::required(config, "_organization_id")?)
+            .map_err(|_| ProviderError::permanent("configuration_missing"))?;
+    } else {
+        if !MODELS.contains(&providers::required(config, "model")?) {
+            return Err(ProviderError::permanent("unsupported_asr_model"));
+        }
+        providers::required(config, "api_key")?;
     }
-    providers::required(config, "api_key")?;
     Ok(base)
 }
 fn runner_password() -> Result<String> {
@@ -33,6 +45,85 @@ fn runner_password() -> Result<String> {
         .ok()
         .filter(|s| s.len() >= 24 && !s.chars().any(char::is_control))
         .ok_or_else(|| ProviderError::permanent("asr_runner_auth_missing"))
+}
+fn authenticated_request(
+    config: &Value,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::RequestBuilder> {
+    let request = request
+        .basic_auth("opencode", Some(runner_password()?))
+        .header(
+            "X-Phone-Organization",
+            config["_organization_id"].as_str().unwrap_or(""),
+        );
+    if uses_local_credentials(config) {
+        Ok(request)
+    } else {
+        Ok(request.header(
+            "X-OpenRouter-Api-Key",
+            providers::required(config, "api_key")?,
+        ))
+    }
+}
+pub async fn test_local_model(config: &Value) -> Result<Value> {
+    let config = json!({"_organization_id":config["_organization_id"],"credential_source":"local","model":config["model"]});
+    uuid::Uuid::parse_str(providers::required(&config, "_organization_id")?)
+        .map_err(|_| ProviderError::permanent("configuration_missing"))?;
+    let base = crate::models::normalized_base(
+        &json!({"base_url":std::env::var("MODEL_RUNNER_URL").unwrap_or_else(|_| DEFAULT_URL.into())}),
+    )?;
+    let result = response(
+        authenticated_request(
+            &config,
+            providers::http_client()?.post(base.join("local/test").unwrap()),
+        )?
+        .json(&json!({"model":config["model"]}))
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await,
+    )
+    .await?;
+    if result["ok"] != true {
+        return Err(ProviderError::permanent("invalid_runner_catalog"));
+    }
+    Ok(
+        json!({"ok":true,"state":"configured","message":"Существующий доступ локального OpenCode и наличие модели проверены. Запрос к модели не выполнялся."}),
+    )
+}
+pub async fn local_catalog(organization: uuid::Uuid) -> Result<Value> {
+    let config = json!({"_organization_id":organization,"credential_source":"local"});
+    let base = crate::models::normalized_base(
+        &json!({"base_url":std::env::var("MODEL_RUNNER_URL").unwrap_or_else(|_| DEFAULT_URL.into())}),
+    )?;
+    let result = response(
+        authenticated_request(
+            &config,
+            providers::http_client()?.get(base.join("local/providers").unwrap()),
+        )?
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await,
+    )
+    .await?;
+    if !result["available"].is_boolean()
+        || !result["providers"].is_array()
+        || !result["asr_models"].is_array()
+    {
+        return Err(ProviderError::permanent("invalid_runner_catalog"));
+    }
+    // Rebuild the DTO from public fields; never relay raw connector credentials.
+    let providers = result["providers"].as_array().unwrap().iter().take(16).map(|provider| {
+        let models = provider["models"].as_array().map(|models| models.iter().take(256).map(|model| json!({"id":model["id"].as_str().unwrap_or(""),"name":model["name"].as_str().unwrap_or("")})).collect::<Vec<_>>()).unwrap_or_default();
+        json!({"id":provider["id"].as_str().unwrap_or(""),"name":provider["name"].as_str().unwrap_or(""),"models":models})
+    }).collect::<Vec<_>>();
+    let models = result["asr_models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|model| model["id"] == LOCAL_MODEL && model["provider"] == "apinex")
+        .map(|_| json!({"id":LOCAL_MODEL,"name":"APInex Voice STT","provider":"apinex"}))
+        .collect::<Vec<_>>();
+    Ok(json!({"available":result["available"],"providers":providers,"asr_models":models}))
 }
 async fn response(
     response: std::result::Result<reqwest::Response, reqwest::Error>,
@@ -91,31 +182,26 @@ async fn response(
 }
 pub async fn test_connection(config: &Value) -> Result<Value> {
     let base = validate_config(config)?;
-    let password = runner_password()?;
     let result = response(
-        providers::http_client()?
-            .post(base.join("asr/test").unwrap())
-            .basic_auth("opencode", Some(password))
-            .header(
-                "X-OpenRouter-Api-Key",
-                providers::required(config, "api_key")?,
-            )
-            .timeout(Duration::from_secs(20))
-            .json(&json!({"model":config["model"]}))
-            .send()
-            .await,
+        authenticated_request(
+            config,
+            providers::http_client()?.post(base.join("asr/test").unwrap()),
+        )?
+        .timeout(Duration::from_secs(20))
+        .json(&json!({"model":config["model"]}))
+        .send()
+        .await,
     )
     .await?;
     if result["ok"] != true {
         return Err(ProviderError::permanent("invalid_transcript_response"));
     }
     Ok(
-        json!({"ok":true,"state":"configured","message":"Docker-коннектор и ключ OpenRouter проверены. Распознавание записи этой проверкой не запускалось."}),
+        json!({"ok":true,"state":"configured","message":if uses_local_credentials(config){"Локальный Docker-коннектор и существующий доступ APInex проверены. Аудио не отправлялось."}else{"Docker-коннектор и ключ OpenRouter проверены. Распознавание записи этой проверкой не запускалось."}}),
     )
 }
 pub async fn transcribe(config: &Value, path: &Path, duration: f64) -> Result<Value> {
     let base = validate_config(config)?;
-    let password = runner_password()?;
     let size = tokio::fs::metadata(path)
         .await
         .map_err(|_| ProviderError::permanent("recording_file_missing"))?
@@ -155,8 +241,7 @@ pub async fn transcribe(config: &Value, path: &Path, duration: f64) -> Result<Va
         if !["wav", "mp3", "mp4", "flac", "m4a", "ogg", "webm", "aac"].contains(&format.as_str()) {
             return Err(ProviderError::permanent("recording_format_unknown"));
         }
-        let raw = response(client.post(base.join("asr/transcriptions").unwrap())
-            .basic_auth("opencode", Some(&password)).header("X-OpenRouter-Api-Key", providers::required(config,"api_key")?)
+        let raw = response(authenticated_request(config, client.post(base.join("asr/transcriptions").unwrap()))?
             .timeout(Duration::from_secs(65))
             .json(&json!({"model":config["model"],"input_audio":{"data":STANDARD.encode(bytes),"format":format},"response_format":"verbose_json"}))
             .send().await).await?;
@@ -203,6 +288,6 @@ pub async fn transcribe(config: &Value, path: &Path, duration: f64) -> Result<Va
         });
     }
     Ok(
-        json!({"provider":"opencode","upstream_provider":"openrouter","model":config["model"],"state":"ready","language":language.unwrap_or_else(||"unknown".into()),"role_confidence":"uncertain","segments":combined,"usage":{"cost":cost,"seconds":seconds,"input_tokens":input_tokens,"output_tokens":output_tokens}}),
+        json!({"provider":"opencode","upstream_provider":if uses_local_credentials(config){"apinex"}else{"openrouter"},"model":config["model"],"state":"ready","language":language.unwrap_or_else(||"unknown".into()),"role_confidence":"uncertain","segments":combined,"usage":{"cost":cost,"seconds":seconds,"input_tokens":input_tokens,"output_tokens":output_tokens}}),
     )
 }

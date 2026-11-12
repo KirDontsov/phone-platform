@@ -425,6 +425,10 @@ pub async fn analyze(config: &Value, input: &Value, allow_demo: bool) -> Result<
                 client
                     .get(base.join("config").unwrap())
                     .basic_auth("opencode", Some(required(config, "api_key")?))
+                    .header(
+                        "X-Phone-Organization",
+                        config["_organization_id"].as_str().unwrap_or(""),
+                    )
                     .send()
                     .await,
             )
@@ -437,6 +441,10 @@ pub async fn analyze(config: &Value, input: &Value, allow_demo: bool) -> Result<
                 client
                     .get(base.join("experimental/tool/ids").unwrap())
                     .basic_auth("opencode", Some(required(config, "api_key")?))
+                    .header(
+                        "X-Phone-Organization",
+                        config["_organization_id"].as_str().unwrap_or(""),
+                    )
                     .send()
                     .await,
             )
@@ -454,6 +462,10 @@ pub async fn analyze(config: &Value, input: &Value, allow_demo: bool) -> Result<
                 client
                     .post(base.join("session").unwrap())
                     .basic_auth("opencode", Some(required(config, "api_key")?))
+                    .header(
+                        "X-Phone-Organization",
+                        config["_organization_id"].as_str().unwrap_or(""),
+                    )
                     .json(&json!({"title":format!("call-analysis-{}",Uuid::new_v4())}))
                     .send()
                     .await,
@@ -483,6 +495,10 @@ pub async fn analyze(config: &Value, input: &Value, allow_demo: bool) -> Result<
                         .unwrap(),
                 )
                 .basic_auth("opencode", Some(required(config, "api_key")?))
+                .header(
+                    "X-Phone-Organization",
+                    config["_organization_id"].as_str().unwrap_or(""),
+                )
                 .timeout(timeout)
                 .json(&request)
                 .send()
@@ -491,7 +507,11 @@ pub async fn analyze(config: &Value, input: &Value, allow_demo: bool) -> Result<
         .await;
         let cleanup = client
             .delete(base.join(&format!("session/{}", encode(id))).unwrap())
-            .basic_auth("opencode", Some(required(config, "api_key")?));
+            .basic_auth("opencode", Some(required(config, "api_key")?))
+            .header(
+                "X-Phone-Organization",
+                config["_organization_id"].as_str().unwrap_or(""),
+            );
         let raw = match response {
             Ok(r) => read_json(r).await,
             Err(e) => Err(e),

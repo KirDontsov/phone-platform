@@ -175,6 +175,32 @@ async fn connections(
     let ctx = auth::context(&state, &req, false, 2).await?;
     Ok(ok(state.db(move|c|Ok(json!({"items":persistence::list_documents(c,ctx.organization_id,"connection")?.into_iter().map(public_connection).collect::<Vec<_>>()}))).await?))
 }
+async fn local_models(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResponse, ApiError> {
+    let ctx = auth::context(&state, &req, false, 2).await?;
+    let catalog = phone_worker::asr_connector::local_catalog(ctx.organization_id).await
+        .unwrap_or_else(|_| json!({"available":false,"providers":[],"asr_models":[]}));
+    Ok(ok(catalog))
+}
+fn validate_model_key_transition(kind: &str, merged: &Value, config: &Value) -> Result<(), ApiError> {
+            let next_provider = config.get("provider").unwrap_or(&merged["provider"]);
+            let next_url = config.get("base_url").unwrap_or(&merged["base_url"]);
+            let normalized =
+                |v: &Value| phone_worker::models::normalized_base(&json!({"base_url":v})).ok();
+            let destination_changed = next_provider != &merged["provider"]
+                || normalized(next_url) != normalized(&merged["base_url"]);
+            let fresh_key = config["api_key"]
+                .as_str()
+                .is_some_and(|s| !s.trim().is_empty() && s != "<configured>");
+            let next_source = config.get("credential_source").unwrap_or(&merged["credential_source"]);
+            let local = next_provider == "opencode" && (
+                (kind == "asr" && next_source == "local") ||
+                (kind == "analysis" && normalized(next_url) == normalized(&json!(phone_worker::asr_connector::DEFAULT_URL)))
+            );
+            if !local && next_provider != "demo" && destination_changed && !fresh_key {
+                return Err(ApiError::bad("При смене провайдера или адреса модели введи новый API-ключ. Внутренний доступ коннектора не переносится"));
+            }
+    Ok(())
+}
 pub fn save_connection_in_db(
     c: &mut diesel::PgConnection,
     ctx: &auth::Context,
@@ -199,19 +225,8 @@ pub fn save_connection_in_db(
         } else {
             json!({})
         };
-        if kind == "asr" {
-            let next_provider = config.get("provider").unwrap_or(&merged["provider"]);
-            let next_url = config.get("base_url").unwrap_or(&merged["base_url"]);
-            let normalized =
-                |v: &Value| phone_worker::models::normalized_base(&json!({"base_url":v})).ok();
-            let destination_changed = next_provider != &merged["provider"]
-                || normalized(next_url) != normalized(&merged["base_url"]);
-            let fresh_key = config["api_key"]
-                .as_str()
-                .is_some_and(|s| !s.trim().is_empty() && s != "<configured>");
-            if next_provider != "demo" && destination_changed && !fresh_key {
-                return Err(ApiError::bad("При смене провайдера или адреса расшифровки введи новый API-ключ. Старый ключ не переносится"));
-            }
+        if matches!(kind.as_str(), "asr" | "analysis") {
+            validate_model_key_transition(&kind, &merged, &config)?;
         }
         for (k, v) in config.as_object().unwrap() {
             let secret = [
@@ -235,6 +250,12 @@ pub fn save_connection_in_db(
             }
             merged[k] = v.clone();
         }
+        if matches!(kind.as_str(), "asr" | "analysis") {
+            merged["_organization_id"] = json!(ctx.organization_id);
+        }
+        if kind == "asr" && merged["provider"] == "opencode" && phone_worker::asr_connector::uses_local_credentials(&merged) {
+            merged.as_object_mut().unwrap().remove("api_key");
+        }
         if kind == "telphin" {
             if !["apiproxy.telphin.ru", "altapi.telphin.ru"]
                 .contains(&merged["host"].as_str().unwrap_or("apiproxy.telphin.ru"))
@@ -254,7 +275,7 @@ pub fn save_connection_in_db(
                 let (code, message) = match e.code.as_str() {
                     "unsupported_asr_model" => (
                         "unsupported_asr_model",
-                        "Выбери Parakeet Ultra или Nemotron 3.5 Transcribe",
+                        "Выбери доступную модель локального провайдера или OpenRouter",
                     ),
                     "asr_runner_url_mismatch" => (
                         "asr_runner_url_mismatch",
@@ -262,7 +283,7 @@ pub fn save_connection_in_db(
                     ),
                     _ => (
                         "invalid_asr_configuration",
-                        "Проверь адрес коннектора, модель и API-ключ OpenRouter",
+                        "Проверь адрес коннектора, модель и выбранный способ доступа",
                     ),
                 };
                 ApiError::new(422, code, message)
@@ -285,12 +306,12 @@ pub fn save_connection_in_db(
         }
         if kind == "analysis"
             && merged["provider"] == "opencode"
-            && merged["base_url"].as_str() == Some("http://model-runner:4096")
-            && merged["api_key"].as_str().is_none_or(|v| v.is_empty())
+            && phone_worker::models::normalized_base(&merged).ok()
+                == phone_worker::models::normalized_base(&json!({"base_url":phone_worker::asr_connector::DEFAULT_URL})).ok()
         {
-            if let Some(password) = runner_password {
-                merged["api_key"] = json!(password);
-            }
+            let password = runner_password.ok_or_else(|| ApiError::bad("Локальный коннектор не подключён"))?;
+            merged["api_key"] = json!(password);
+            merged["base_url"] = json!(phone_worker::asr_connector::DEFAULT_URL);
         }
         let encrypted = contracts::seal(&merged, &key).map_err(|_| ApiError::internal())?;
         let data = json!({"kind":kind,"state":"configured","config":redacted(&merged),"config_encrypted":encrypted,"last_error":null,"last_sync_at":old.as_ref().and_then(|v|v.data.get("last_sync_at")).cloned().unwrap_or(Value::Null)});
@@ -413,9 +434,10 @@ async fn test_connection(
 ) -> Result<HttpResponse, ApiError> {
     let ctx = auth::context(&state, &req, true, 2).await?;
     let kind = kind.into_inner();
+    let org = ctx.organization_id;
     let key = state.key;
     let k = kind.clone();
-    let config = state
+    let mut config = state
         .db(move |c| {
             let d = document(
                 c,
@@ -426,6 +448,9 @@ async fn test_connection(
             config_value(&d, &key)
         })
         .await?;
+    if matches!(kind.as_str(), "asr" | "analysis") {
+        config["_organization_id"] = json!(org);
+    }
     let result = phone_worker::test_connection(&kind, &config)
         .await
         .map_err(|e| {
@@ -552,6 +577,7 @@ pub fn configure(c: &mut web::ServiceConfig) {
         .route("/api/filters", web::post().to(create_filter))
         .route("/api/filters/{id}", web::delete().to(delete_filter))
         .route("/api/connections", web::get().to(connections))
+        .route("/api/connections/local-models", web::get().to(local_models))
         .route("/api/connections/{kind}", web::put().to(save_connection))
         .route("/api/connections/{kind}", web::delete().to(disconnect))
         .route(
@@ -792,6 +818,17 @@ pub fn activate_rubric_in_db(
 #[cfg(test)]
 mod rubric_contract_tests {
     use super::*;
+    #[test]
+    fn local_pairing_never_follows_an_analysis_destination_change() {
+        let local = json!({"provider":"opencode","base_url":"http://model-runner:4096","api_key":"synthetic-internal-pairing"});
+        for key in [Value::Null, json!(""), json!("<configured>")] {
+            assert!(validate_model_key_transition("analysis", &local, &json!({"provider":"openai","base_url":"https://other.example/v1","api_key":key})).is_err());
+        }
+        assert!(validate_model_key_transition("analysis", &local, &json!({"provider":"openai","base_url":"https://other.example/v1"})).is_err());
+        assert!(validate_model_key_transition("analysis", &local, &json!({"provider":"openai","base_url":"https://other.example/v1","api_key":"synthetic-new-provider-key"})).is_ok());
+        assert!(validate_model_key_transition("analysis", &json!({"provider":"openai","base_url":"https://old.example/v1"}), &json!({"provider":"opencode","base_url":"http://model-runner:4096"})).is_ok());
+        assert!(validate_model_key_transition("analysis", &local, &json!({"model":"apinex/free/test"})).is_ok());
+    }
     #[test]
     fn rubric_accepts_legacy_and_explicit_modes_but_rejects_invalid_mode_types() {
         let mut rubric = json!({"name":"Synthetic rubric","criteria":[{"id":"greeting","name":"Greeting","weight":1,"instruction":"Require a greeting","required":true}]});

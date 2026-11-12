@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && mkdir -p /etc/opencode /opt/model-runner /work \
     && chown 10001:10001 /work
 COPY infra/model-runner/opencode.json /etc/opencode/opencode.json
-COPY infra/model-runner/start.mjs infra/model-runner/gateway.mjs infra/model-runner/healthcheck.mjs /opt/model-runner/
+COPY infra/model-runner/start.mjs infra/model-runner/gateway.mjs infra/model-runner/local-providers.mjs infra/model-runner/codex-proxy.mjs infra/model-runner/healthcheck.mjs /opt/model-runner/
 USER 10001:10001
 WORKDIR /work
 EXPOSE 4096

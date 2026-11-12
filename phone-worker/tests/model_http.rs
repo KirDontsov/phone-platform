@@ -64,7 +64,7 @@ async fn scripted_server(
             } else {
                 Value::Null
             };
-            if actual_path.starts_with("/asr/") {
+            if actual_path.starts_with("/asr/") || actual_path.starts_with("/local/") {
                 body["_captured_headers"] = json!(headers);
             }
             out.lock().unwrap().push((actual_path, body));
@@ -379,4 +379,45 @@ async fn opencode_asr_connection_probe_and_failures_preserve_safe_codes_without_
             "no second format/provider fallback request"
         );
     }
+}
+
+#[tokio::test]
+async fn local_opencode_asr_uses_runtime_pairing_and_session_tenant_without_forwarding_stale_keys() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("synthetic.wav");
+    std::fs::write(&path, b"RIFF synthetic isolated audio").unwrap();
+    let (url, requests, server) = scripted_server(vec![("POST", "/asr/transcriptions", 200,
+        json!({"text":"Synthetic local transcript","segments":[{"start":0.,"end":1.,"text":"Synthetic local transcript","speaker":0}],"usage":{"seconds":1}}))]).await;
+    let _env = AsrEnvironment::new(&url);
+    let org = "11111111-1111-4111-8111-111111111111";
+    let config = json!({"provider":"opencode","base_url":url,"model":"apinex/voice-stt","local_provider":"apinex","credential_source":"local","_organization_id":org,"api_key":"synthetic-stale-external-key"});
+    let transcript = models::transcribe(&config, &path, 2., false, &json!({})).await.unwrap();
+    server.await.unwrap();
+    assert_eq!(transcript["upstream_provider"], "apinex");
+    assert_eq!(transcript["model"], "apinex/voice-stt");
+    assert_eq!(transcript["segments"][0]["role"], "unknown");
+    assert!(transcript["usage"]["cost"].is_null());
+    let rows = requests.lock().unwrap();
+    let headers = rows[0].1["_captured_headers"].as_str().unwrap().to_lowercase();
+    assert!(headers.contains(&format!("x-phone-organization: {org}")));
+    assert!(!headers.contains("x-openrouter-api-key"));
+    assert!(!headers.contains("synthetic-stale-external-key"));
+    assert!(!rows[0].1.to_string().contains("synthetic-stale-external-key"));
+}
+
+#[tokio::test]
+async fn local_catalog_only_exposes_public_model_metadata_and_uses_server_tenant() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let (url, requests, server) = scripted_server(vec![("GET", "/local/providers", 200,
+        json!({"available":true,"api_key":"synthetic-private-key","providers":[{"id":"apinex","name":"APInex","api_key":"synthetic-private-key","models":[{"id":"apinex/free/test","name":"Test","credential":"synthetic-private-key"}]}],"asr_models":[{"id":"apinex/voice-stt","name":"Wrong invented name","provider":"apinex","api_key":"synthetic-private-key"}]}))]).await;
+    let _env = AsrEnvironment::new(&url);
+    let org = uuid::Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+    let catalog = phone_worker::asr_connector::local_catalog(org).await.unwrap();
+    server.await.unwrap();
+    assert!(!catalog.to_string().contains("synthetic-private-key"));
+    assert_eq!(catalog["asr_models"][0]["name"], "APInex Voice STT");
+    assert_eq!(catalog["providers"][0]["models"][0]["id"], "apinex/free/test");
+    let rows = requests.lock().unwrap();
+    assert!(rows[0].1["_captured_headers"].as_str().unwrap().to_lowercase().contains(&format!("x-phone-organization: {org}")));
 }
