@@ -15,7 +15,7 @@
 5. Получи публичные host keys сервера и relay по доверенному каналу, сверь fingerprints, закрепи: `./start-analyzer.sh pin --jump-public-key /путь/к/server.pub --relay-public-key /путь/к/relay.pub`. Скрипт откажется молча заменять изменившуюся привязку.
 6. Запусти `./start-analyzer.sh`. Он поднимет собственный Docker project phone-analyzer, передаст Phone credentials по stdin в собственный volume и дождётся сквозной HTTP-проверки через SSH. Host ssh-agent/домашний auth OpenCode/Bondscan не подключаются.
 
-Remote host пока не задан в задаче, поэтому реальная удалённая установка не выполнена. До pairing можно запустить только локальный connector: `./start-analyzer.sh local`; это не включает туннель и не означает связь с сервером.
+Для текущей установки сервер — `dks@81.16.141.170`, сайт — `https://phone.bondscan.ru`; адрес и собственный Phone ключ уже настроены на этом компьютере. Инструкция установки сайта: [release-runbook.md](release-runbook.md). Новый компьютер проходит одноразовый pairing заново. До pairing можно запустить только локальный connector: `./start-analyzer.sh local`; это не включает туннель и не означает связь с сервером.
 
 ## Повседневные команды
 

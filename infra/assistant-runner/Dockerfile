@@ -11,7 +11,11 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
 COPY infra/assistant-runner/vendor ./vendor
 COPY infra/assistant-runner/src ./src
 COPY infra/assistant-runner/tests ./tests
+# Git source can arrive through a private archive. Runtime code is public source;
+# auth remains in a separate private volume and is never touched here.
+RUN chmod a+r package.json package-lock.json && chmod -R a+rX vendor src tests
 USER 10001:10001
+RUN node --check src/server.mjs && node node_modules/@openai/codex/bin/codex.js --version
 EXPOSE 8091
 ENTRYPOINT ["node", "src/server.mjs"]
 HEALTHCHECK --interval=5s --timeout=4s --start-period=15s --retries=20 CMD ["node", "src/healthcheck.mjs"]

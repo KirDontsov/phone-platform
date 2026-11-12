@@ -1,0 +1,12 @@
+# Prebuilt linux/amd64 release. Merge LAST; never build on the production root disk.
+services:
+  api:
+    image: phone-platform-api:${PHONE_RELEASE_TAG:?set the exact built release tag}
+  worker:
+    image: phone-platform-worker:${PHONE_RELEASE_TAG:?set the exact built release tag}
+  client:
+    image: phone-platform-client:${PHONE_RELEASE_TAG:?set the exact built release tag}
+  assistant-runner:
+    image: phone-platform-assistant-runner:${PHONE_RELEASE_TAG:?set the exact built release tag}
+  model-tunnel:
+    image: phone-platform-model-tunnel:${PHONE_RELEASE_TAG:?set the exact built release tag}

@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_14_locally_verified_remote_pairing_pending
-stopped_at: Phase14 local Docker analyzer running and SSH fixture verified; real remote SSH host/pairing and model quality pending; phase12 paused
+status: phase_15_deploying
+stopped_at: Phase15 PLAN-CHECK PASS; GitHub master pushed, independent HTTPS certificate issued, native amd64 images building; planned own Phone migration and real analyzer pairing in progress
 last_updated: "2026-11-12"
 progress:
-  total_phases: 14
+  total_phases: 15
   implemented_phases: 13
   locally_verified_phases: 13
   accepted_phases: 0
@@ -18,7 +18,11 @@ progress:
 
 # Project State
 
-## Текущее состояние — фаза14
+## Текущее состояние — фаза15
+
+Пользователь явно разрешил deployment на dks@81.16.141.170, phone.bondscan.ru и push существующей master в GitHub KirDontsov/phone-platform. Независимый PLAN-CHECK PASS0/3, GSD structure valid4tasks. Git history/README сохранены, origin подключён, HEAD2e894a4 уже отправлен. Сервер исследован по Lentaria без чтения Bondscan secrets/DB. DNS готов; отдельные own HTTPvhost/webroot и LEcertificate phone.bondscan.ru до2027-02-10 созданы. Native amd64 images собираются собственным HDD-backed ephemeralBuildKit без sharedprune. Реальная миграция только Phone DB/media/auth с сохранением encryptionkey и Codexgeneration, сменой трёх публичных demo passwords и отзывом сессий — в работе. Новый Phone restricted SSHpubkey разрешён, jumphostpinned; relaypairing ещё не объявленPASS. HTTPSpublication и productionUAT pending. Phase12paused/stash сохранены.
+
+## История реализации — фаза14
 
 Уточнена topology пользователя: удалённый сайт/worker вызываетlocalOpenCodeнаэтомкомпьютеречерезDockerSSHtunnel, one-commandstart-analyzerкакпоидееBondscan. ДоступныйстарыйBondscan startscript исследованбезenv/auth/ключей; скриншотсоответствуетболее новойотсутствующейDockerконфигурации. Phonetransportреализованнезависимо, нечерезегоБД/MQ/secrets.
 

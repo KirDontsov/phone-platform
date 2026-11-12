@@ -79,6 +79,8 @@ Updated: 2026-11-12
 
 ## Evolution
 
+Production target подтверждён2026-11-12: https://phone.bondscan.ru, SSH dks@81.16.141.170, независимый Phone Compose рядом с Lentaria/Bondscan. GitHub origin https://github.com/KirDontsov/phone-platform.git, существующая master/history сохраняются. Пользователь разрешил deployment/push. Phase15 переносит только собственные Phone данные/доступ Codex и связывает remote worker с этим компьютером; чужие runtime credentials не используются.
+
 После каждой фазы обновлять решения, проверенные требования, ограничения и STATE. Изменения пользовательских ответов распространять на требования, планы и проверки.
 
 ## Пользовательский Codex startup — 2026-11-12
@@ -91,4 +93,4 @@ Updated: 2026-11-12
 
 ## Локальный analyzer — уточнение 2026-11-12
 
-Сайт/worker работают на удалённом сервере, вызовы моделей уходят через Docker SSH tunnel к этому компьютеру. Нужен запуск start-analyzer одной командой по идее Bondscan; его актуальной Docker-конфигурации со скриншота в checkout нет, поэтому реализован независимый Phone transport без его БД/учётных записей/секретов. LocalOpenCode1.18.10 +явныйASRconnector поддерживают exact moondream/parakeet-ultra иnvidia/nemotron-3.5-transcribe, обе добавлены вopencode.json. Данные/очередь остаютсяremote; компания задаётсвойключOpenRouter. RemoteSSHtarget отсутствует, livepairing/modelqualitypending. Startup: start-analyzer.sh, инструкцияdocs/local-analyzer.md.
+Сайт/worker работают на удалённом сервере, вызовы моделей уходят через Docker SSH tunnel к этому компьютеру. Нужен запуск start-analyzer одной командой по идее Bondscan; его актуальной Docker-конфигурации со скриншота в checkout нет, поэтому реализован независимый Phone transport без его БД/учётных записей/секретов. LocalOpenCode1.18.10 +явныйASRconnector поддерживают exact moondream/parakeet-ultra иnvidia/nemotron-3.5-transcribe, обе добавлены вopencode.json. Данные/очередь остаютсяremote; компания задаётсвойключOpenRouter. В фазе14 RemoteSSHtarget отсутствовал; разрешённый productiontarget и pairing выполняются в фазе15. Modelqualitypending. Startup: start-analyzer.sh, инструкцияdocs/local-analyzer.md.

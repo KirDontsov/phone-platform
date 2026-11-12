@@ -150,3 +150,10 @@ Research → независимый PLAN-CHECK PASS0/3 → execute → independe
 **Requirements:** ASR-01/02,AI-01,PLAT-01,OPS-01.
 **Plan:**14-01: hardenedconnector+exactcatalog; portablelocalstartup/remoterelay; worker/APItenantSTT; settings/UAT.
 Research→independentPLAN-CHECK PASS0/3→execute→independentreview/fixes→verifier→automatedUAT. Implementation+localchecksесть; SSHrealhost/pairing/OpenRouterqualityиhumanUATpending. GSDplanstructurevalid4tasks; подробностиphases/14-local-analyzer-opencode.
+
+### Phase 15: Production / GitHub / Real Analyzer Pairing
+
+**Goal:** HTTPS phone.bondscan.ru на разрешённом сервере, сохранённые Phone DB/media/Codexauth, работающий remote→local analyzer и опубликованная master.
+**Depends on:** Phases10,11,13,14. Phase12paused.
+**Plan:**15-01 source-only amd64 release; protected first transfer; own nginx/TLS and real tunnel; independent verifier/UAT/GitHub.
+Research→independentPLAN-CHECK PASS0/3→execute in progress. Known demo passwords меняются, новые находятся только в локальном0600 secrets/production-access.json; encryption key/Codex generation сохраняются. Другие приложения и shared cache не меняются. Финальная ownerUAT и реальная ASR quality отдельно от TLS/tunnel health.
