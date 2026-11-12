@@ -88,3 +88,7 @@ Startup followup закрыт локально: Node20/20 вhost/Docker, knownpr
 Commit ef3f00e: App ID/App Secret достаточны в APIформе чата и настройках; отсутствующий/пустой Client ID определяется только по authenticated /user/. DeployedAPI/worker/clienthealthy;32worker+4API+45frontend+actualbrowser1PASS. Основные missing-IDregressions REDподтверждены, securitynegativeRED отдельнонепроверяли. Настоящие ключи Телфина пользователем ещёнепроверены. Детали phases/11-configuration-assistant/11-CLIENT-ID-FIX.md.
 
 Phase12implementationdraft сохранён в отдельном Gitstash `ddddf25f4ef384b0a02359042efa4bee159a1f09` («Paused phase12 implementation; API Client ID fix remains in main»), вmainоставлен только работающий API-key путь. Plans/researchсохраняются; phase12неисполнятьбезвозобновленияпользователем. Stashнеудалятьдоуспешногоresume/review.
+
+## Записи: лимит API и ожидание плеера
+
+После liveимпорта ready391real(+17demo),pending126; provider429→retryна13:00UTC. ReadyfileпроверенHTTP206иmutedbrowserplayback. ИсправленAudioPlayer: pending/ratelimitedнеоткрываетmedia иобъясняетожидание, readyпоpollingвключаетсяавтоматически, готовыйфайлвыбираетсябезсбросавоспроизведения. Frontend51/51,5newbehaviourregressionsRED,actualbrowserready+pendingPASS. Clientdeployed. Подробностиreviews/RECORDING-AVAILABILITY.md. Фаза12остаётсянапaузе; лимитproviderобходомне снимается.
