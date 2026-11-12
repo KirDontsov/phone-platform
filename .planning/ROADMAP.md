@@ -171,3 +171,10 @@ Research→PLAN-CHECKoriginalsupersededuseremailrequirement→revision1PASS→ex
 **Depends on:** Phases3,15,16; phase12paused.
 **Plan:**17-01 actualsync_range/RED→GREEN, recovery/error→configured, safe native release и retry одного исходного задания компании.
 Research→independentPLAN-CHECKPASS0/3→execute→implementationreviewPASS; code2087a86/runtime15-2087a86 healthy. Реальный импорт возобновлён, finalcheckpoint/polling/independentverifier в17-VERIFICATION; humanUATpending. Provider timestamps/checkpoints strict, coverageunknown при default364days. Схема/сессии/данные/секреты сохраняются; другие компании не затронуты операторскимretry.
+
+### Phase18: Codex / Existing Local OpenCode Provider
+
+**Goal:** восстановитьвходCodexчерезлокальныйтуннель, использоватьсуществующийпровайдерOpenCodeбезповторногоключа.
+**Depends on:** Phases11,14–17; phase12paused.
+**Plan:**18-01 boundedCONNECT/proxyenv +failedreauthpreservation; tenantboundlocalprovider/catalog/keylessUI/explicitASR; saferelease/UAT.
+Research→independentPLAN-CHECKrevision1PASS→execute→independentROOT/AUTHreviewsPASS→runtime15-d59a82e8healthy. НастоящийdeviceflowPASS, providerkeylessUI/catalog/foreigndenialPASS. APInexреальный402/allowancefalse, freellmapiendpointoff, пользовательскийOAuth/inference/UATpending; никакойложнойготовностимодели. ИсходныйTelphinretrybackoff/checkpoint43370сохранён. Деталиphases/18-assistant-opencode-recovery.

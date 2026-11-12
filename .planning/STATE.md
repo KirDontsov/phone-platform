@@ -2,25 +2,29 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_18_research_phase_17_provider_backoff
-stopped_at: Phase17 empty optional history dates fixed, production15-2087a86 healthy, original tenant import resumed43370calls, provider-requested hourbackoff, independentimplementationverifierPASS; phase18 Codex/localprovider recoveryresearch; phase12 paused
+status: phase_18_automated_verified_human_uat_pending
+stopped_at: Phase18 production15-d59a82e healthy, realCodexdeviceproxyPASS, tenantboundkeylessOpenCodeUI, actualAPInex402 externalquota; userOAuth/inferenceUATpending; phase17retrybackoffpreserved, phase12paused
 last_updated: "2026-11-12"
 progress:
-  total_phases: 17
-  implemented_phases: 16
-  locally_verified_phases: 16
+  total_phases: 18
+  implemented_phases: 17
+  locally_verified_phases: 17
   accepted_phases: 0
   completed_phases: 0
-  total_plans: 36
-  implemented_plans: 34
+  total_plans: 37
+  implemented_plans: 35
   completed_plans: 1
 ---
 
 # Project State
 
-## Текущее состояние — фаза18 (research)
+## Текущее состояние — фаза18
 
-Пользователь сообщил: в OpenCode нужен уже подключённый провайдер без новогоAPIключа, входCodex не работает. Настоящий pinnedCodexdeviceprobe на сервере получил403; на этомкомпьютере OpenAIOIDC200, server403. У новойкомпании нет сохранённогоauth, потеряприrelease не доказана; прежнийsmoke проверял толькоstatus старогоowner, неinference. В глобальномOpenCodeконфиге обнаруженыproviderdefs, сохранённыйAPInexключ принимает/models200; ключи не выводились, Bondscanне читался. НужноboundedCodextrafficчерезlocaltunnel, scopedreuseexistinglocalprovider/убратьневерноеAPIkeyтребование. Research18-AUTH-RESEARCH; план/executepending.
+Исправлен Codexremote403: authenticatedexact-hostCONNECTчерезсуществующийlocalSSH4096, explicitproxyenv/NO_PROXY; настоящийpinnedCLIdeviceflowчерезштатныйproductionserviceenvPASS. Переавторизациясохраняетстаруюidentity приошибке; pending/prepare/commit/receipt/logout и durablefailclosedbeforepromotion провереныNode/реальнымPGHTTP. IndependentPLAN-CHECKrevision1 иROOT/AUTHreviewPASSпослеfixes. Code d59a82e/runtime15-d59a82e опубликованы,8healthy, workeridlelease0передзаменой; Telphinoriginalretry/attempts/next_attempt/window33/page7/calls43370сохранены.
+
+OpenCodeиспользуетсобственную600копиюсуществующихглобальныхproviderdefs freellmapi/apinex толькодляявнойcompany. Catalog29models/keylessanalysisUI, keylesslocalAPInexVoiceSTTexplicitopt-in, legacyOpenRouterдваIDотдельно; noautoconfig/paidSTTswitch. Tenant/sessionguardALLnativepaths+secretredaction, internalpairingнеуходитнаизменённыйendpoint, trustedorgизsession/job. РеальныйAPInexпринимаетaccountkey, ноsubscriptionallowedfalse/модельHTTP402; inferenceНЕработающий, externalquotaнеустранена. FreellmAPIendpointнедоступен, RouterAIключвконфигеотсутствует. Точныйproviderасинхронноспрошен, ответpending; чужиедоступынекопировать, ничего непокупать.
+
+Frontend95/build, gateway26, assistant26/pinnedofflineMCP, workerlib19+HTTP11+providers16(1старыйPGskip), Python14, APIunits3+actualPGasr1/auth2PASS. ОсновныеREDвключая5UI/2actualPG/proxy/auth/crash/nativeguards/quotaподтверждены; Rust402отдельноREDнет. Publicowner/tenant/audio/Codexstatus/registration/browser+realanalyzerdoctorPASS; realdevicechallengePASS, liveowncatalog29/foreign403/redacted/402PASSnegative. НезависимаяVERIFICATIONв18-VERIFICATION; humanOAuth/реальныйдиалог/ASRqualitypending. OwnPGfixture/SSHforwardудалены, phase12/stash сохранены. Всеучётныезаписи/SMTP/данные/secretsосталисьпрежними.
 
 ## История реализации — фаза17
 
