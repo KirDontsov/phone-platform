@@ -79,11 +79,23 @@ async function checked(response) {
   const status = response.status;
   if (status === 401) throw failure(401, 'provider_unauthorized');
   if (status === 403) throw failure(403, 'provider_forbidden');
+  if (status === 402) throw failure(402, 'provider_payment_required');
   if (status === 429) throw failure(429, 'provider_rate_limited', Number.isFinite(retry) && retry > 0 ? Math.min(3600, Math.ceil(retry)) : 60);
   if (status === 408 || status === 504) throw failure(504, 'provider_timeout');
   if (status === 413) throw failure(413, 'asr_audio_too_large');
   if (status >= 500 || status >= 300 && status < 400) throw failure(502, 'provider_unavailable');
   throw failure(422, 'provider_request_failed');
+}
+async function checkExistingAccount(provider, fetchImpl, signal, freeModel) {
+  if (provider.options.baseURL !== 'https://api.apinex.bond/v1') return;
+  const headers = { Authorization: 'Bearer ' + provider.options.apiKey };
+  const balanceResponse = await fetchImpl(provider.options.baseURL + '/balance', { method: 'GET', headers, redirect: 'error', signal });
+  await checked(balanceResponse); const balance = await boundedJson(balanceResponse, signal);
+  if (balance.object !== 'balance') throw failure(502, 'invalid_provider_response');
+  const subscriptionResponse = await fetchImpl(provider.options.baseURL + '/subscription', { method: 'GET', headers, redirect: 'error', signal });
+  await checked(subscriptionResponse); const subscription = await boundedJson(subscriptionResponse, signal);
+  if (subscription.object !== 'subscription' || typeof subscription.allowed !== 'boolean') throw failure(502, 'invalid_provider_response');
+  if (!subscription.allowed && (freeModel || !(balance.balance_usd > 0))) throw failure(402, 'provider_payment_required');
 }
 function selectedModel(body, catalog) {
   if (!catalog.some(model => model.id === body?.model)) throw failure(422, 'asr_model_unsupported');
@@ -165,6 +177,7 @@ export function createGateway({ password, config, fetchImpl = fetch, nativeBase 
         if (!strictKeys(body, ['model']) || typeof body.model !== 'string') throw failure(422, 'local_model_unavailable');
         const slash = body.model.indexOf('/'), provider = localSettings.providers[body.model.slice(0, slash)], model = body.model.slice(slash + 1);
         if (slash < 1 || !provider?.models[model]) throw failure(422, 'local_model_unavailable');
+        await checkExistingAccount(provider, fetchImpl, controller.signal, model.startsWith('free/'));
         const probe = await fetchImpl(provider.options.baseURL + '/models', { method: 'GET', headers: { Authorization: 'Bearer ' + provider.options.apiKey }, redirect: 'error', signal: controller.signal });
         await checked(probe); const metadata = await boundedJson(probe, controller.signal);
         if (!Array.isArray(metadata.data) || !metadata.data.some(item => item.id === model)) throw failure(422, 'local_model_unavailable');
@@ -183,6 +196,7 @@ export function createGateway({ password, config, fetchImpl = fetch, nativeBase 
           const provider = localSettings.providers.apinex, headers = { Authorization: 'Bearer ' + provider.options.apiKey };
           if (url.pathname === '/asr/test') {
             if (!strictKeys(body, ['model'])) throw failure(422, 'asr_invalid_request');
+            await checkExistingAccount(provider, fetchImpl, controller.signal, false);
             const probe = await fetchImpl(provider.options.baseURL + '/models', { method: 'GET', headers, redirect: 'error', signal: controller.signal });
             await checked(probe); const metadata = await boundedJson(probe, controller.signal);
             if (!Array.isArray(metadata.data)) throw failure(502, 'invalid_transcript_response');

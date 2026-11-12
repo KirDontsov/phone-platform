@@ -524,6 +524,15 @@ pub async fn analyze(config: &Value, input: &Value, allow_demo: bool) -> Result<
             return Err(ProviderError::permanent("runner_cleanup_failed"));
         }
         let raw = raw?;
+        if raw["info"]["error"].is_object() {
+            return Err(match raw["info"]["error"]["data"]["statusCode"].as_u64() {
+                Some(402) => ProviderError::permanent("provider_payment_required"),
+                Some(401) => ProviderError::permanent("provider_reauthorization_required"),
+                Some(403) => ProviderError::permanent("provider_permission_denied"),
+                Some(429) => ProviderError::retry("provider_rate_limited", 60),
+                _ => ProviderError::permanent("provider_request_rejected"),
+            });
+        }
         runner_usage = json!({"input_tokens":raw["info"]["tokens"]["input"].as_u64().unwrap_or(0),"output_tokens":raw["info"]["tokens"]["output"].as_u64().unwrap_or(0),"cost":raw["info"]["cost"].as_f64()});
         raw["parts"]
             .as_array()

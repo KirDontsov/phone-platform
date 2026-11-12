@@ -15,7 +15,7 @@ async function setup(t, options={}) {
  const nativeCalls=[], providerCalls=[];
  const native = http.createServer(async(req,res)=>{ const chunks=[];for await(const c of req)chunks.push(c);nativeCalls.push({path:req.url,method:req.method,body:Buffer.concat(chunks).toString()});res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(req.url==='/session'?{id:'ses_owned'}:req.url==='/config'?{permission:{'*':'deny'},provider:{apinex:{options:{apiKey:key,headers:{Authorization:'Bearer '+key}}}},echo:'Bearer '+key}:{ok:true})); });
  const nativeBase=await listen(native);
- const gateway=createGateway({password,config,localSettings:settings(),nativeBase,fetchImpl:async(url,init)=>{providerCalls.push({url,init});return new Response(JSON.stringify(url.endsWith('/models')?{data:[{id:'free/test'}]}:{metadata:{duration:2},results:{channels:[{alternatives:[{transcript:'Синтетическая речь',words:[{start:0,end:1,word:'Речь',speaker:0}]}]}]},usage:{cost_tokens:800,units:2}}),{status:200});},...options});
+ const gateway=createGateway({password,config,localSettings:settings(),nativeBase,fetchImpl:async(url,init)=>{providerCalls.push({url,init});return new Response(JSON.stringify(url.endsWith('/balance')?{object:'balance',balance_usd:options.accountDenied?0:1}:url.endsWith('/subscription')?{object:'subscription',allowed:!options.accountDenied}:url.endsWith('/models')?{data:[{id:'free/test'}]}:{metadata:{duration:2},results:{channels:[{alternatives:[{transcript:'Синтетическая речь',words:[{start:0,end:1,word:'Речь',speaker:0}]}]}]},usage:{cost_tokens:800,units:2}}),{status:200});},...options});
  const base=await listen(gateway.server);
  t.after(async()=>{await gateway.close();await new Promise(resolve=>{native.close(resolve);native.closeAllConnections();});});
  return {nativeCalls,providerCalls,call(path,body,tenant=org,method){return fetch(base+path,{method:method||(body===undefined?'GET':'POST'),headers:{Authorization:authorization,...(tenant?{'X-Phone-Organization':tenant}:{}),...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)});}};
@@ -47,12 +47,12 @@ test('existing provider probes never require user API key or submit audio; STT u
  const h=await setup(t);
  assert.equal((await h.call('/local/test',{model:'apinex/free/test'})).status,200);
  assert.equal((await h.call('/asr/test',{model:'apinex/voice-stt'})).status,200);
- assert.equal(h.providerCalls.length,2);assert.ok(h.providerCalls.every(c=>c.init.method==='GET'));
+ const beforeAudio=h.providerCalls.length;assert.equal(beforeAudio,6);assert.ok(h.providerCalls.every(c=>c.init.method==='GET'));
  assert.equal(h.providerCalls[0].init.headers.Authorization,'Bearer '+key);
  const payload={model:'apinex/voice-stt',input_audio:{data:Buffer.from('synthetic audio').toString('base64'),format:'wav'},response_format:'verbose_json'};
- assert.equal((await h.call('/asr/transcriptions',payload,foreign)).status,403);assert.equal(h.providerCalls.length,2);
+ assert.equal((await h.call('/asr/transcriptions',payload,foreign)).status,403);assert.equal(h.providerCalls.length,beforeAudio);
  const result=await(await h.call('/asr/transcriptions',payload)).json();assert.equal(result.text,'Синтетическая речь');assert.equal(result.segments[0].role,undefined);assert.equal(result.usage.cost,undefined);
- assert.match(h.providerCalls[2].url,/^https:\/\/api\.apinex\.bond\/v1\/tools\/voice\/stt\?/);assert.equal(h.providerCalls[2].init.headers['Content-Type'],'audio/wav');assert.equal(h.providerCalls[2].init.body.toString(),'synthetic audio');
+ assert.match(h.providerCalls[beforeAudio].url,/^https:\/\/api\.apinex\.bond\/v1\/tools\/voice\/stt\?/);assert.equal(h.providerCalls[beforeAudio].init.headers['Content-Type'],'audio/wav');assert.equal(h.providerCalls[beforeAudio].init.body.toString(),'synthetic audio');
  assert.equal((await h.call('/asr/test',{model:'moondream/parakeet-ultra'})).status,422);
 });
 test('only provider definitions are trusted and credentials never appear in nested response fields',()=>{
@@ -61,4 +61,12 @@ test('only provider definitions are trusted and credentials never appear in nest
  const bad=JSON.parse(JSON.stringify(local));bad.providers.apinex.options.baseURL='https://user:pass@other.example/v1';assert.throws(()=>parseLocalSettings(bad));
  assert.equal(localCatalog(local,foreign).available,false);
  assert.throws(()=>apinexTranscript({results:{channels:[{alternatives:[{transcript:'test',words:[{start:-1,end:2,word:'x'}]}]}]}}));
+});
+
+test('public model listing never disguises an exhausted existing account as a successful connection',async t=>{
+ const h=await setup(t,{accountDenied:true});
+ for(const [path,model]of [['/local/test','apinex/free/test'],['/asr/test','apinex/voice-stt']]){
+  const result=await h.call(path,{model});assert.equal(result.status,402);assert.equal((await result.json()).error.code,'provider_payment_required');
+ }
+ assert.ok(h.providerCalls.every(call=>call.init.method==='GET'));assert.equal(h.nativeCalls.length,0);
 });

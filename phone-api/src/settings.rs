@@ -457,7 +457,7 @@ async fn test_connection(
             ApiError::new(
                 422,
                 "provider_test_failed",
-                format!("Проверка не пройдена: {}", e.code),
+                if e.code == "provider_payment_required" { "У провайдера закончился лимит или недоступен баланс. Сохранённый доступ не требует повторного ввода ключа".to_string() } else { format!("Проверка не пройдена: {}", e.code) },
             )
         })?;
     Ok(ok(result))

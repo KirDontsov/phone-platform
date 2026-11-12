@@ -170,6 +170,7 @@ async fn response(
         }
         "provider_unauthorized" => ProviderError::permanent("provider_reauthorization_required"),
         "provider_forbidden" => ProviderError::permanent("provider_permission_denied"),
+        "provider_payment_required" => ProviderError::permanent("provider_payment_required"),
         _ => match status {
             401 => ProviderError::permanent("asr_runner_auth_failed"),
             403 => ProviderError::permanent("provider_permission_denied"),

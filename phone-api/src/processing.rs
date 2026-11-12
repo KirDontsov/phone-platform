@@ -30,6 +30,7 @@ fn safe_error(error: Option<&str>) -> Value {
             | "provider_rate_limited"
             | "provider_unauthorized"
             | "provider_forbidden"
+            | "provider_payment_required"
             | "provider_unavailable"
             | "provider_timeout"
             | "provider_request_failed"
