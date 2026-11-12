@@ -132,3 +132,11 @@ Defined/updated: 2026-11-11. Реализация всех разделов су
 - [ ] **CODEX-02**: Собственная приватная для компании авторизация Codex device code/API key через UI; status/error/logout/cancel. Без авторизации ответ модели не имитируется.
 - [ ] **MCP-01**: Настоящий SDK stdio MCP bridge с восемью типизированными инструментами; проверки исходной сессии/org/owner/run/TTL на каждый вызов, атомарные idempotent mutation/audit/CAS. Нет произвольных HTTP/SQL/IAM/retention/export.
 - [ ] **SETUP-01**: По сообщению в чате помощник подключает/проверяет Телфин и запускает импорт; создаёт/обновляет статусы, теги, фильтры, шкалу и правила перезвона. UI показывает фактически применённые результаты. Реальные модельное качество и доступ Телфина проверяются после настройки аккаунтов.
+
+## Phase12 — обычные доступы Телфина
+
+- [ ] **ONBOARD-01**: Пользователь передаёт логин/пароль АТС простым защищённым вводом; APIключи не обязательны дляосновного UX, billingотдельно.
+- [ ] **ONBOARD-02**: Fixed provision tool получает APIдоступ trustedCallAPI, автоматически определяет client_id и подключает АТС без секретов вмодели.
+- [ ] **ONBOARD-03**: Durable external-effect ledger/authority/CAS/reconciliation предотвращают blindduplicates/latewrites; MFA/unknownportal явноactionrequired.
+
+Owning phase12; local/live verification будетотмечена отдельно.

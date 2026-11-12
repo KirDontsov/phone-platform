@@ -125,3 +125,12 @@ Created/updated: 2026-11-11. Ниже исходные цели фаз; факт
 **Plans:** 11-01 scoped chat API/shared settings; 11-02 Docker Codex/MCP/auth; 11-03 UI/integration.
 
 Research →3 plans → independent plan-check →revision1/3 PASS → execute. Локальная реализация есть у всех трёх планов; independent verifier и UAT фиксируются отдельно. Внешняя авторизация/модель/Телфин — pending, synthetic ответы не выдаются за live inference.
+
+### Phase 12: Telphin Credential Onboarding
+
+**Goal:** Подключить Телфин из обычных логина/пароля АТС без обязательных APIполей; billingотдельно, APIadvanced.
+**Requirements:** ONBOARD-01, ONBOARD-02, ONBOARD-03
+**Depends on:** Phases3,11
+**Plans:** 12-01 fixed portal +scoped durableprovision;12-02 ordinaryaccessUX+9toolintegration.
+
+Research: officialbootstrap +anonymousloginHTML; behindauthmarkup/livepermissionspending. Контракт docs/contracts/telphin-onboarding-v1.md. Дваплана/5tasks structurevalid. Independentcheck/revision gatepending; execute не объявленcompleted.

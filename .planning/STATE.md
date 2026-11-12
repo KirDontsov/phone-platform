@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_11_local_verification_complete
-stopped_at: Phase 11 implemented and locally verified; user/live acceptance pending
+status: phase_12_paused_by_user
+stopped_at: User paused phase12 and clarified they need to locate Telphin API credentials; drafts preserved, not deployed
 last_updated: "2026-11-12"
 progress:
-  total_phases: 11
+  total_phases: 12
   implemented_phases: 11
   locally_verified_phases: 11
   accepted_phases: 0
   completed_phases: 0
-  total_plans: 29
+  total_plans: 31
   implemented_plans: 29
   completed_plans: 1
 ---
@@ -80,3 +80,11 @@ Research → 26 plans → независимый PLAN-CHECK → 2 baseline revis
 Дополнительный live MCP дефект также исправлен: модель с tool-search catalog получала настройки как deferred без доступного механизма поиска. Ровно8Phone Platform tools теперь direct-only (`omit_tools_from=[deferred,code_mode]`); встроенные OS/code-mode инструменты по-прежнему выключены. Настоящий get_workspace_configuration через gpt-6.1-sol завершилсяcompleted, revision0 сохранена, контрольный чат удалён. Docker/API/client пересобраны/healthy, пользовательский вход сохранён.
 
 Startup followup закрыт локально: Node20/20 вhost/Docker, knownproductionmodelcatalog +fullorchestrator, forcedOS/JS/edit denied, affectedAPI2/2, frontend43/43. Пользователь затем уточнил новый UXgap: есть логины кабинета и АТС, а неAPIAppIDSecret. Начинается фаза12 — получениеAPIприложения через защищённый PBX onboarding. Текущий API-only способ остаётся advanced, новый пользовательский ввод не должен требовать неизвестных емуAPIполей.
+
+Пользователь остановил переделку («Нет, погоди») и уточнил: не знает, где получить APIдоступ. Фаза12 приостановлена; plancheck PASS не означает реализацию. Написанные draftform/adapter файлы сохраняются, не опубликованы и не считаютсяпроверенными. Dockerостаётсяна рабочем startupfix d013faf (Codexreply+MCPreadPASS,20Node/nativechecks). Следующееобщение — инструкцияпоофициальному app/register, беззапросасекретов.
+
+## Client ID — узкий пользовательский фикс
+
+Commit ef3f00e: App ID/App Secret достаточны в APIформе чата и настройках; отсутствующий/пустой Client ID определяется только по authenticated /user/. DeployedAPI/worker/clienthealthy;32worker+4API+45frontend+actualbrowser1PASS. Основные missing-IDregressions REDподтверждены, securitynegativeRED отдельнонепроверяли. Настоящие ключи Телфина пользователем ещёнепроверены. Детали phases/11-configuration-assistant/11-CLIENT-ID-FIX.md.
+
+Phase12implementationdraft сохранён в отдельном Gitstash `ddddf25f4ef384b0a02359042efa4bee159a1f09` («Paused phase12 implementation; API Client ID fix remains in main»), вmainоставлен только работающий API-key путь. Plans/researchсохраняются; phase12неисполнятьбезвозобновленияпользователем. Stashнеудалятьдоуспешногоresume/review.
