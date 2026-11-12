@@ -164,3 +164,10 @@ Research→independentPLAN-CHECK PASS0/3→execute completed→independentreview
 **Depends on:** Phases2,15; phase12paused.
 **Plan:**16-01 pendingverificationAPI+v2migration; register/verifyUI; ownSMTPtransport/release/UAT.
 Research→PLAN-CHECKoriginalsupersededuseremailrequirement→revision1PASS→execute→independentreviewPASS. BackendrealPG/SMTP8/8,frontend90/90,realMailpitChrome2/2PASS. Nativeimages15-98b53e7/production8healthy/schema2→independentVERIFICATIONPASS→automatedUATPASS; Gmailinbox/humanUATpending. Backup18+revocationREDPASS, ownfixturescleaned. No SMTPskip/fakeverification, no identity beforeOTP; browserbinding/passwordfallback preventsunsolicitedmailpre-hijack.
+
+### Phase17: Telphin Import / Empty Optional History Date
+
+**Goal:** импорт all_available работает с незаполненной необязательной датой, успешный retry возвращает автоматическую синхронизацию.
+**Depends on:** Phases3,15,16; phase12paused.
+**Plan:**17-01 actualsync_range/RED→GREEN, recovery/error→configured, safe native release и retry одного исходного задания компании.
+Research→independentPLAN-CHECKPASS0/3→execute→implementationreviewPASS; code2087a86/runtime15-2087a86 healthy. Реальный импорт возобновлён, finalcheckpoint/polling/independentverifier в17-VERIFICATION; humanUATpending. Provider timestamps/checkpoints strict, coverageunknown при default364days. Схема/сессии/данные/секреты сохраняются; другие компании не затронуты операторскимretry.

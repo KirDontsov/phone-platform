@@ -2,23 +2,33 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_16_automated_verified_human_uat_pending
-stopped_at: Phase16 email-confirmed registration deployed15-98b53e7, independent verifier/automated UAT PASS, real Gmail/user UAT pending; phase12 paused
+status: phase_18_research_phase_17_provider_backoff
+stopped_at: Phase17 empty optional history dates fixed, production15-2087a86 healthy, original tenant import resumed43370calls, provider-requested hourbackoff, independentimplementationverifierPASS; phase18 Codex/localprovider recoveryresearch; phase12 paused
 last_updated: "2026-11-12"
 progress:
-  total_phases: 16
-  implemented_phases: 15
-  locally_verified_phases: 15
+  total_phases: 17
+  implemented_phases: 16
+  locally_verified_phases: 16
   accepted_phases: 0
   completed_phases: 0
-  total_plans: 35
-  implemented_plans: 33
+  total_plans: 36
+  implemented_plans: 34
   completed_plans: 1
 ---
 
 # Project State
 
-## Текущее состояние — фаза16
+## Текущее состояние — фаза18 (research)
+
+Пользователь сообщил: в OpenCode нужен уже подключённый провайдер без новогоAPIключа, входCodex не работает. Настоящий pinnedCodexdeviceprobe на сервере получил403; на этомкомпьютере OpenAIOIDC200, server403. У новойкомпании нет сохранённогоauth, потеряприrelease не доказана; прежнийsmoke проверял толькоstatus старогоowner, неinference. В глобальномOpenCodeконфиге обнаруженыproviderdefs, сохранённыйAPInexключ принимает/models200; ключи не выводились, Bondscanне читался. НужноboundedCodextrafficчерезlocaltunnel, scopedreuseexistinglocalprovider/убратьневерноеAPIkeyтребование. Research18-AUTH-RESEARCH; план/executepending.
+
+## История реализации — фаза17
+
+Пользователь подключил Телфин; импорт all_available падал invalid_provider_timestamp до первого checkpoint. На настоящем API timestamps корректны, причина — пустая необязательная confighistory_start. Actualsync_range теперь игнорирует missing/blank/whitespace inputs, сохраняет строгие непустые даты/checkpoints/UTC/guards и прежние defaults30/364days. Неизвестное coverage не становится полным. Успешный retry восстанавливает error→configured для дальнейшего polling, disconnected не активируется.
+
+GSD PLAN-CHECK/revision0 и независимый implementationreview PASS; 5 новых tests, 2 исходные регрессии RED подтверждены. Workerlib/providers/modelHTTP:42actualchecksPASS+1existingPG-case skipped безTEST_DATABASE_URL, новыхSQL/schemaизменений нет. Code2087a86/GitHub и native5images15-2087a86 опубликованы,8productionhealthy. Только исходный failedsync одной компании атомарно повторён с org/job/subject/kind/state/errorguards, receipt1. Импортированы43370уникальныхзвонков, window33/page7; затем TelphinHTTP429 назначил часовойbackoff, jobretry/attempt1. Независимыйverifier подтвердил implementation/release/liveprogress/backoffPASS; completed/configured/scheduledpollingpendingиз-завнешнейквоты, очередь не обходить. См.17-VERIFICATION. DB/secrets/Codexauth сохранены, другие проекты не менялись. Postdeployowner/tenant/media/Codexauth/mandatoryregistrationChrome+mobile/realanalyzertunnelPASS. HumanUATpending; полная историческая база/APIcoverage и ASRquality не обещаются. Phase12paused/stash сохранён.
+
+## История реализации — фаза16
 
 Явно потребована публичная регистрация и подтверждение почты как Bondscan. Immediate-signupdraft отменён пользователем и не публиковался; revisedPLAN-CHECK PASS1/3. Реализованы pendingtable/v2migration безuser/org/session доOTP,6digitcode15мин/resend60сек, nonceORoriginalpasswordproof длядругогобраузера, persistent5attempts/одноразовыйcommit/newemptytenant; существующиепользователи/пароли/данные не меняются. Собственный privateCIDR SMTPbridge кhostPostfixhealthy, nohostMTAchanges/чужихсекретов, SPF/rDNS/protocolpath проверены; Gmailinboxнепроверялся.
 
