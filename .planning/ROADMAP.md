@@ -115,3 +115,14 @@ Created/updated: 2026-11-11. Ниже исходные цели фаз; факт
 | 10 | 0/2 | Not started |
 
 Итого: 26 планов реализации. План основания платформы разделён после независимой проверки объёма: Rust scaffold, Vue scaffold и схема данных/надёжные задания выполняются отдельно. Сроки и бюджет уточняются после phase 1 и замера объёма/длительности звонков; календарные обещания без этих данных не даются.
+
+### Phase 11: Configuration Assistant
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd:plan-phase 11 to break down)

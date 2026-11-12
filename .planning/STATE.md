@@ -2,23 +2,33 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: ready_for_final_uat
-stopped_at: Implemented and locally verified all ten phase scopes; user UAT and real-provider acceptance pending
+status: planning_phase_11
+stopped_at: Phase 11 assistant research and plans ready; independent plan-check in progress
 last_updated: "2026-11-12"
 progress:
-  total_phases: 10
+  total_phases: 11
   implemented_phases: 10
   locally_verified_phases: 10
   accepted_phases: 0
   completed_phases: 0
-  total_plans: 26
+  total_plans: 29
   implemented_plans: 26
   completed_plans: 1
 ---
 
 # Project State
 
-## Текущее состояние
+## Текущее состояние — фаза 11
+
+Пользователь запросил встроенный чат как в Bondscan: Codex в Docker через MCP сам подключает Телфин и настраивает статусы, теги, фильтры, шкалу и правила перезвона. Доступы передаются защищённой карточкой внутри чата; модель получает encrypted credential_ref. Новый assistant-runner отделён от анализатора записей, у которого MCP остаётся выключенным.
+
+Контракт: docs/contracts/assistant-v1.md. Research и три плана: phases/11-configuration-assistant. Root — автор плана/API; fix_cli_review — независимый plan-checker; domain_persistence — исследование и реализация runner; frontend_platform — исследование и реализация UI. Модели наследуются. Основная реализация начинается после PLAN-CHECK и revision-loop (максимум 3 доработки).
+
+Проверены Codex npm 0.167.2 и MCP SDK 1.32.2. Host/Bondscan auth не читалась, запросов к моделям не было. Собственная авторизация Codex будет в UI: device code/API key. История ограничена owner/user/org; capability на каждый tool привязан к исходной сессии, run и TTL. Мутации, receipts и audit атомарны, есть CAS/cancel/revoke/deadline. Разрешены восемь типизированных инструментов настройки; нет IAM, retention, export, произвольных HTTP/SQL, shell, репозитория или Docker socket.
+
+База v1 остаётся запущенной; прежние пользовательская и внешняя приёмки отдельно Pending.
+
+## База v1 до фазы 11
 
 Веб-платформа «Сигнал» реализована и запущена в независимом Docker project phone-platform: http://localhost:18081. Учебный владелец owner@demo.local / PhoneDemo!2026, две изолированные компании. API/worker/client/PostgreSQL/RabbitMQ/Mailpit и необязательный OpenCode runner healthy. Повторный запуск: `scripts/dev.sh up`.
 
