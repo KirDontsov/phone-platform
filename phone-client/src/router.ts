@@ -11,6 +11,7 @@ const router=createRouter({history:createWebHistory(),routes:[
 {path:'/callbacks',component:()=>import('./pages/callbacks/CallbacksPage.vue')},
 {path:'/settings/:tab?',component:()=>import('./pages/settings/SettingsPage.vue')},
 {path:'/integrations',component:()=>import('./pages/integrations/IntegrationsPage.vue')},
+{path:'/assistant',component:()=>import('./pages/assistant/AssistantPage.vue')},
 {path:'/operations',component:()=>import('./pages/operations/OperationsPage.vue')},
 {path:'/:pathMatch(.*)*',redirect:'/dashboard'}]})
 router.beforeEach(async to=>{const auth=useAuth();if(!auth.ready)await auth.load();if(!to.meta.public&&!auth.me)return{path:'/login',query:{redirect:to.fullPath}};if(to.path==='/login'&&auth.me)return'/dashboard'})

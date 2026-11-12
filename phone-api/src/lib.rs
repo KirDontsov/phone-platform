@@ -1,3 +1,4 @@
+pub mod assistant;
 pub mod auth;
 pub mod calls;
 pub mod operations;
@@ -173,6 +174,7 @@ pub fn to_json(d: Document) -> Value {
 }
 pub fn configure(cfg: &mut web::ServiceConfig) {
     auth::configure(cfg);
+    assistant::configure(cfg);
     calls::configure(cfg);
     settings::configure(cfg);
     operations::configure(cfg);

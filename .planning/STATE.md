@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: planning_phase_11
-stopped_at: Phase 11 assistant research and plans ready; independent plan-check in progress
+status: phase_11_local_verification_complete
+stopped_at: Phase 11 implemented and locally verified; user/live acceptance pending
 last_updated: "2026-11-12"
 progress:
   total_phases: 11
-  implemented_phases: 10
-  locally_verified_phases: 10
+  implemented_phases: 11
+  locally_verified_phases: 11
   accepted_phases: 0
   completed_phases: 0
   total_plans: 29
-  implemented_plans: 26
+  implemented_plans: 29
   completed_plans: 1
 ---
 
@@ -22,11 +22,17 @@ progress:
 
 Пользователь запросил встроенный чат как в Bondscan: Codex в Docker через MCP сам подключает Телфин и настраивает статусы, теги, фильтры, шкалу и правила перезвона. Доступы передаются защищённой карточкой внутри чата; модель получает encrypted credential_ref. Новый assistant-runner отделён от анализатора записей, у которого MCP остаётся выключенным.
 
-Контракт: docs/contracts/assistant-v1.md. Research и три плана: phases/11-configuration-assistant. Root — автор плана/API; fix_cli_review — независимый plan-checker; domain_persistence — исследование и реализация runner; frontend_platform — исследование и реализация UI. Модели наследуются. Основная реализация начинается после PLAN-CHECK и revision-loop (максимум 3 доработки).
+Контракт: docs/contracts/assistant-v1.md. Research и три плана: phases/11-configuration-assistant. Root — автор плана/API; fix_cli_review — независимый plan-checker; domain_persistence — исследование и реализация runner; frontend_platform — исследование и реализация UI. Модели наследуются. Независимый PLAN-CHECK PASS после доработки1/3; реализация прошла execute gate. API/runner/UI реализованы и проверены локально; финальный пользовательский тест и живые аккаунты остаются отдельной приёмкой.
 
 Проверены Codex npm 0.167.2 и MCP SDK 1.32.2. Host/Bondscan auth не читалась, запросов к моделям не было. Собственная авторизация Codex будет в UI: device code/API key. История ограничена owner/user/org; capability на каждый tool привязан к исходной сессии, run и TTL. Мутации, receipts и audit атомарны, есть CAS/cancel/revoke/deadline. Разрешены восемь типизированных инструментов настройки; нет IAM, retention, export, произвольных HTTP/SQL, shell, репозитория или Docker socket.
 
-База v1 остаётся запущенной; прежние пользовательская и внешняя приёмки отдельно Pending.
+Фаза11: Codex0.167.2/MCP SDK1.32.2, отдельный hardened Docker runner,8typed tools, owner chat drawer/fullpage/mobile, защищённые карточки Телфина, собственный model login, durable history/run/events/cancel. Общие settings services/CAS/audit; credentials physical GC/restore revocation. Нет product fake response fallback.
+
+Проверки phase11: API6/6 на настоящих Actix/PostgreSQL/loopbackHTTP (scope,originalsession,generation,receipts,CAS,races,partial/EOF,GC); затронутые HTTPplatform2/2; Node/Docker15/15 включая actual pinned Codex+SDK positive/forcedforbiddennegative с локальным Responses fixture. Frontend43/43 unit/build; assistant E2E mainDocker4/4 +isolatedwirefixture4/4, это5distinctcases на2targets, baselineaffected6distinctPASS. Screenshots1440/390, overflow0, JSerrors0. Python81offlinePASS +actualPGbackup2/2; отдельный backup17/17включаяэти2. Полный create→isolatedrestore повторPASS,22ready media, auth/capabilities revoked, ciphertextpurged, noresurrection. Машинные отчёты приватны в data/eval/phase11 и data/eval/assistant-*.json.
+
+Независимые review findings исправлены и проверены: authgeneration TOCTOU, порядок сообщений, metadata, failed tool budget/replay, DB lock inversion, nested schema parity, false uncertain status наcompleted, неполный settings snapshot. Research/plan-check/summary/verification/UAT — phases/11-configuration-assistant. Первая planrevision1/3 PASS; implementationverification отдельно.
+
+Стенд http://localhost:18081 запущен. Проверка владельцем: открыть «Помощник» →войти в Codex кодом/APIkey →«Добавить доступы» для Телфина →обычная задача текстом. Настоящий model/device/Telphinlive и humanUAT pending; платных внешних model requests0. База v1 и её внешние проверки сохраняются.
 
 ## База v1 до фазы 11
 

@@ -1,6 +1,6 @@
 # Помощник настройки: UX и frontend research
 
-Дата: 2026-11-12. Фаза11. Статус: research/UX согласован с draft `docs/contracts/assistant-v1.md` и планом11-03; реализация ещё не начата, ожидается plan-check PASS. Wire format закреплён контрактом; ниже UI-представление этих данных.
+Дата: 2026-11-12. Фаза11. Статус: frontend 11-03 реализован после independent plan-check PASS и проверен на настоящем Docker API и отдельном test-only MCP стенде. Live Codex/Телфин и финальный пользовательский UAT остаются отдельной приёмкой. Контракт: `docs/contracts/assistant-v1.md`.
 
 ## Что взято из Bondscan
 
@@ -89,3 +89,46 @@ Tool events хранят только seq/type/tool_name/title/status/summary. �
 Unit/component: role visibility; один panel/store для drawer/page; secret JSON validation и очистка формы; payload Телфин endpoint содержит credentials, Codex key идёт только auth/start, message endpoint содержит только текст/ref; readonly history не получает raw secrets; cancellation+late events+org switch; повторные events/run mismatch/оборванный polling; readiness/auth error и device expiry; tool state persistence/reconcile.
 
 Реальный local API E2E: owner FAB → новая история → задания tools → фактические теги/статусы/сохранённый фильтр; rename/delete; mobile390 без overflow/с доступной кнопкой закрытия; secureform синтетический sentinel не появляется в DOM истории/GET messages/audit; организацияB не видит историю/ref/runA; manager/reviewer denied; stop/disconnect/reload восстанавливают фактический исход. Внешняя авторизация Codex/Телфин проверяется отдельно при доступах, отсутствие не подменяется demo success.
+
+## Реализация и локальные доказательства
+
+2026-11-12: independent plan-check PASS, исполнен frontend 11-03. `entities/assistant/model.ts`, `shared/api/assistant.ts`, `shared/interfaces/assistant.ts`, `features/assistant/{AssistantFab,AssistantPanel,ConversationList,ToolActivity,SecureCredentialsForm,ModelAccessCard}.vue`, `pages/assistant/AssistantPage.vue`, App/router и namespace `assistant-` в style.css. Полноэкранный route поддерживает безопасный `?conversation=UUID` для reload/проверки удалённой или чужой истории; секреты в URL не используются.
+
+Текущий локальный результат: `npm --prefix phone-client test`43/43 PASS (10файлов); `npm --prefix phone-client run build`PASS (vue-tsc+Vite). Новые проверки: missingauth/no ghost message, одинаковый idempotency body при потере ответа, durable partial/event polling, servercancel без потери выполненных действий, late tenant response, secret paste guard, строгий Телфин JSON, отдельный auth key endpoint, безопасный device link/expiry, historyrename с версией, секретная форма при смене компании, owner-only visibility. API client теперь также отбрасывает pre-aborted view и response после отмены в том же tenant.
+
+Визуальный предварительный просмотр использует настоящую локальную авторизацию и явно подменённые только assistant HTTP responses для вёрстки; это не evidence работы модели/MCP/backend. Preview в ignored `phone-client/test-results/assistant-preview/`; на mobile390 документ390, composer793<viewport844, pageerrors0. Итоговые реальные API/MCP browser-проверки приведены ниже; предварительные layout previews не подменяют эти evidence.
+
+`tests/e2e/assistant.spec.ts` содержит явно разделённые сценарии: neutral owner/history/secureform/tenant и mobile; noauth требует `E2E_ASSISTANT=1 E2E_ASSISTANT_AUTH=required` и проверяет `authenticated=false` до отправки; configured требует `E2E_ASSISTANT_FIXTURE=1` и `status.model=test-wire-fixture` на отдельном test-only API/runner, затем проверяет реально созданный через MCP тег и отмену `[hold]`. Reviewer — с явной test account env. Никакой browser fixture не включён в продуктовый runtime, настоящие платные inference не запускаются этими env автоматически.
+
+Дополнительная регрессия платформы: owner settings/reviewer/mobile/protected/reset прошли на настоящем local API, затем login/card/logout после исправления sidebar layout (новый owner nav ранее вытеснял logout при720px) повторён PASS. Итого6 различных затронутых сценариев подтверждены; первый неуспешный прогон не скрывается как общий зелёный suite. Unit дополнены stalled-submit30s/idempotent retry и защитой от устаревшего auth status после успешного входа.
+
+Хронология: optional server `Message.sequence` сохраняется явной проекцией, detail/merge сортируются по ней; legacy fallback — created_at и user-before-assistant для одной задачи с одинаковым временем. Отдельная регрессия42-го теста покрывает reload-порядок без зависимости от UUID. Просроченный выбранный credential_ref даёт явную ошибку до model request, а не исчезает из тела запроса молча.
+
+При403/404 активного run polling останавливается и приватное содержимое очищается;403 дополнительно обновляет membership через auth/me. Удалённый диалог не превращается в бесконечное «восстановление связи». Это покрыто отдельной регрессией43-го теста.
+
+
+## Итоговая проверка frontend 11-03
+
+| Проверка | Результат |
+| --- | --- |
+| Vitest | **43/43 PASS**, 10 файлов: 20 baseline + 23 новые/расширенные проверки |
+| vue-tsc + production Vite | **PASS**, основной JS 153.94 kB / gzip 56.55 kB |
+| Финальный Docker 18081, модель не авторизована | **4/4 PASS**, zero skips, 4.8 s: owner drawer/secureform/history/tenant; mobile; настоящий missingauth без fakeanswer; reviewer denial |
+| Свежий изолированный API 18083 + test-wire runner 18084, UI 18085 | **4/4 PASS**, zero skips, 8.4 s: owner/privacy/tenant; mobile; reviewer; реальный MCP upsert→тег в БД→history reload→[hold]/cancel |
+| Затронутые прежние экраны платформы | 6 различных сценариев прошли; sidebar logout regression исправлен и focused повтор пройден |
+| Реальная внешняя модель/Телфин |Не вызывались; доступ и качество не объявляются проверенными |
+
+Два browser-набора исполняют 5 различных assistant-сценариев, с 3 повторными neutral cases на обоих стендах. Configured target — **test-only** fake wire model с настоящими cookie/CSRF/API/PostgreSQL/MCP tool mutations, `model=test-wire-fixture`; никаких mocked browser routes и runtime fallback. Сам ответ явно сообщает об отсутствии inference. На основном Docker настоящий runner готов, но `authenticated=false`; интерфейс показывает необходимость входа и не генерирует ответ.
+
+На реальном пути обнаружены и устранены: несогласованная numeric ClientID в synthetic fixture (UI теперь проверяет 1..40 цифр до POST), sidebar account overflow после нового пункта, неверный terminal status служебных шагов backend при completed run, технические toolslugs/слитные ссылки в UX. После последних API/client images основной4/4 повтор пройден; после завершения statusfix свежий configured4/4 повтор пройден с дополнительным assertion об отсутствии uncertain events в известном успешном fixture run. Порядок user→assistant после reload подтверждён.
+
+Актуальные authenticated screenshots без browser mocks:
+
+- `data/eval/phase11/screenshots/assistant-main-drawer.png` — настоящий Docker drawer.
+- `assistant-main-desktop.png`, `assistant-main-mobile.png` — отдельная настройка Codex, отсутствие авторизации видно явно.
+- `assistant-main-secure-mobile.png` — защищённая форма без заполненных секретов.
+- `assistant-test-wire-desktop.png`, `assistant-test-wire-mobile.png` — свежая завершённая реальная MCP-операция на test-only runner; все 5 events completed.
+
+Скриншоты просмотрены визуально. Desktop1440/document1440; mobile390/document390, composer bottom793<844, JS errors0. Browser test дополнительно уменьшает mobile высоту до 500 и проверяет доступность composer. Machine provenance/metrics: `data/eval/phase11/assistant-main-visual.json`, `assistant-fixture-visual.json`, `frontend-verification.json`.
+
+Финальный пользовательский сценарий: войти владельцем → «Помощник» → подключить Codex через свою разрешённую учётную запись/ключ → «Добавить доступы» для Телфина → написать задачу → сверить фактические настройки и историю действий. Настоящие account/device-login/model inference и запросы Телфина требуют локальных доступов; test-wire их не подтверждает.

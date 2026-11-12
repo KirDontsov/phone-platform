@@ -111,6 +111,13 @@ Defined/updated: 2026-11-11. Реализация всех разделов су
 | OPS-02 | Phase 9 | Local verified; user UAT pending |
 | OPS-03 | Phase 10 | Local verified; user UAT pending |
 | REL-01 | Phase 10 | Implemented; live acceptance pending |
+| CHAT-01 | Phase 11 | Implemented; local browser verified, user UAT pending |
+| CHAT-02 | Phase 11 | Local API/concurrency verified; user UAT pending |
+| CHAT-03 | Phase 11 | Local encrypted-ref/privacy/GC verified; live Telphin pending |
+| CODEX-01 | Phase 11 | Actual pinned Docker/native executor/SDK verified |
+| CODEX-02 | Phase 11 | Auth protocol/lifecycle verified; real account approval pending |
+| MCP-01 | Phase 11 | Actual SDK/API/PG mutation/replay/revoke verified |
+| SETUP-01 | Phase 11 | Tools/UI implemented and wire tested; live inference/Telphin pending |
 
 Каждое v1-требование имеет ровно одну owning phase; зависимости и сквозные ограничения обязательны во всех затронутых фазах. Покрытие проверяется перед сдачей планов.
 

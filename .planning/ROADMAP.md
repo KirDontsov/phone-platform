@@ -101,28 +101,27 @@ Created/updated: 2026-11-11. Ниже исходные цели фаз; факт
 
 ## Progress
 
-| Phase | Plans complete | Implementation status |
-|-------|----------------|-----------------------|
-| 1 | 1/2 | CLI offline passed; live deferred by user |
-| 2 | 0/5 | Not started |
-| 3 | 0/3 | Not started |
-| 4 | 0/3 | Not started |
-| 5 | 0/2 | Not started |
-| 6 | 0/3 | Not started |
-| 7 | 0/2 | Not started |
-| 8 | 0/2 | Not started |
-| 9 | 0/2 | Not started |
-| 10 | 0/2 | Not started |
+| Phase | Реализовано планов | Локальная проверка / приёмка |
+|-------|--------------------|-----------------------------|
+| 1 | 2/2 | CLI offline PASS; live pending |
+| 2 | 5/5 | PASS; user UAT pending |
+| 3 | 3/3 | PASS; live Телфин pending |
+| 4 | 3/3 | PASS; user UAT pending |
+| 5 | 2/2 | PASS; live ASR pending |
+| 6 | 3/3 | PASS; live quality pending |
+| 7 | 2/2 | PASS; user UAT pending |
+| 8 | 2/2 | PASS; live CRM/Sheets pending |
+| 9 | 2/2 | PASS; user UAT pending |
+| 10 | 2/2 | Local restore/evals PASS; live pilot pending |
+| 11 | 3/3 | API/runner/browser PASS; live/user UAT pending |
 
-Итого: 26 планов реализации. План основания платформы разделён после независимой проверки объёма: Rust scaffold, Vue scaffold и схема данных/надёжные задания выполняются отдельно. Сроки и бюджет уточняются после phase 1 и замера объёма/длительности звонков; календарные обещания без этих данных не даются.
+Итого: 29 планов реализации (26 baseline +3 assistant). Реализация не означает закрытую пользовательскую/внешнюю приёмку. План основания платформы разделён после независимой проверки объёма: Rust scaffold, Vue scaffold и схема данных/надёжные задания выполняются отдельно. Сроки и бюджет уточняются после phase 1 и замера объёма/длительности звонков; календарные обещания без этих данных не даются.
 
 ### Phase 11: Configuration Assistant
 
-**Goal:** [To be planned]
-**Requirements**: TBD
-**Depends on:** Phase TBD
-**Plans:** 0 plans
+**Goal:** Владелец через чат с Codex в отдельном Docker-контейнере подключает Телфин и настраивает статусы, теги, фильтры, шкалы и правила перезвона через scoped MCP.
+**Requirements:** CHAT-01, CHAT-02, CHAT-03, CODEX-01, CODEX-02, MCP-01, SETUP-01
+**Depends on:** Phases 2–7, 9–10
+**Plans:** 11-01 scoped chat API/shared settings; 11-02 Docker Codex/MCP/auth; 11-03 UI/integration.
 
-Plans:
-
-- [ ] TBD (run /gsd:plan-phase 11 to break down)
+Research →3 plans → independent plan-check →revision1/3 PASS → execute. Локальная реализация есть у всех трёх планов; independent verifier и UAT фиксируются отдельно. Внешняя авторизация/модель/Телфин — pending, synthetic ответы не выдаются за live inference.

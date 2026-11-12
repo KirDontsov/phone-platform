@@ -1,0 +1,10 @@
+<script setup lang="ts">
+import type {AssistantRun,AssistantEvent} from '../../shared/interfaces/assistant'
+import {toolLinks,runLabels,assistantError} from '../../shared/interfaces/assistant'
+import Icon from '../../shared/ui/Icon.vue'
+defineProps<{run:AssistantRun}>()
+const toolTitles:Record<string,string>={get_workspace_configuration:'Чтение настроек компании',connect_telphin:'Подключение Телфина',test_telphin_connection:'Проверка доступа к Телфину',sync_telphin:'Запуск импорта звонков',upsert_taxonomy:'Создание и обновление тегов и статусов',upsert_filter:'Сохранение представления',save_rubric:'Настройка критериев качества',set_callback_rules:'Настройка правил перезвона'}
+function title(event:AssistantEvent){return event.tool_name&&event.title===event.tool_name?toolTitles[event.tool_name]||event.title:event.title}
+const labels={running:'Выполняется',completed:'Готово',failed:'Ошибка',uncertain:'Нужна проверка'}
+</script>
+<template><div class="assistant-activity" :data-run-state="run.state"><div class="assistant-activity-title"><span class="assistant-state-dot" :class="run.state"></span><b>{{runLabels[run.state]}}</b><span v-if="run.model" class="subtle">{{run.model}}</span></div><ol v-if="run.events.length"><li v-for="event in run.events" :key="event.seq" :class="event.status"><Icon :name="event.status==='completed'?'check':event.status==='running'?'clock':'alert'" :size="14"/><div><b>{{title(event)}}</b><small>{{labels[event.status]}}</small><p v-if="event.summary">{{event.summary}}</p><RouterLink v-if="event.status==='completed'&&event.tool_name&&toolLinks[event.tool_name]" :to="toolLinks[event.tool_name]!.to">{{toolLinks[event.tool_name]!.label}} →</RouterLink></div></li></ol><p v-if="run.state==='failed'" class="assistant-error">{{assistantError(run.error_code)}}</p><p v-if="run.state==='cancelled'" class="subtle">Уже выполненные изменения сохранены.</p><p v-if="run.state==='interrupted'" class="assistant-error">Выполнение прервано. Проверьте уже выполненные действия перед повтором.</p></div></template>

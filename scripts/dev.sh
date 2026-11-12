@@ -6,7 +6,7 @@ case "$action" in
   up)
     python3 scripts/setup-local.py
     docker compose --env-file .env.platform -f infra/compose.yml up -d --build --wait
-    printf '%s\n' 'Сигнал: http://localhost:18081 · почта: http://localhost:18025'
+    printf '%s\n' 'Сигнал: http://localhost:18081 · почта: http://localhost:18025 · Codex assistant включён'
     ;;
   down|ps|logs)
     shift

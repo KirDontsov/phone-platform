@@ -131,7 +131,7 @@ INSERT INTO deletion_tombstones SELECT l.* FROM restore_deletion_ledger l JOIN o
 CREATE TEMP TABLE purge_documents ON COMMIT DROP AS
  WITH RECURSIVE targets AS(
   SELECT d.organization_id,d.id FROM documents d JOIN restore_deletion_ledger t ON t.organization_id=d.organization_id
-   AND(t.subject_id=d.id OR(t.provider_id IS NOT NULL AND t.provider_id=d.data->>'provider_id')) WHERE d.kind='call'
+   AND ((t.subject_id=d.id AND d.kind IN ('call','assistant_conversation','assistant_credential')) OR (d.kind='call' AND t.provider_id IS NOT NULL AND t.provider_id=d.data->>'provider_id'))
   UNION
   SELECT d.organization_id,d.id FROM documents d JOIN targets p ON d.organization_id=p.organization_id AND d.parent_id=p.id
  ) SELECT * FROM targets;
@@ -142,8 +142,33 @@ DELETE FROM documents d USING purge_documents p WHERE d.organization_id=p.organi
 SELECT json_build_object('removed_documents',(SELECT count(*) FROM purge_documents),
  'ledger_entries',(SELECT count(*) FROM restore_deletion_ledger),
  'media',COALESCE((SELECT json_agg(json_build_object('organization_id',organization_id,'path',path)) FROM purge_media),'[]'::json),
+ 'resurrected_subjects',(SELECT count(*) FROM documents d JOIN restore_deletion_ledger t ON t.organization_id=d.organization_id
+ AND ((t.subject_id=d.id AND d.kind IN ('call','assistant_conversation','assistant_credential')) OR (d.kind='call' AND t.provider_id IS NOT NULL AND t.provider_id=d.data->>'provider_id'))),
  'resurrected_calls',(SELECT count(*) FROM documents d JOIN restore_deletion_ledger t ON t.organization_id=d.organization_id
  AND(t.subject_id=d.id OR(t.provider_id IS NOT NULL AND t.provider_id=d.data->>'provider_id')) WHERE d.kind='call'));
+COMMIT;
+"""
+
+
+# Restored DB snapshots cannot resume assistant capabilities or revive temporary secrets.
+# The Codex auth volume is deliberately absent from the backup; a fresh login is required.
+ASSISTANT_REVOKE_SQL = r"""
+BEGIN;
+DELETE FROM documents WHERE kind='assistant_credential';
+UPDATE documents SET data=(data-'capability_hash'-'session_hash') ||
+ jsonb_build_object('state',CASE WHEN data->>'state' IN ('queued','running') THEN 'interrupted' ELSE data->>'state' END,
+ 'error_code',CASE WHEN data->>'state' IN ('queued','running') THEN 'assistant_restored' ELSE data->>'error_code' END,
+ 'finished_at',CASE WHEN data->>'state' IN ('queued','running') THEN to_jsonb(now()) ELSE data->'finished_at' END),
+ version=version+1,updated_at=now() WHERE kind='assistant_run';
+UPDATE documents SET data=(data-'capability_hash'-'session_hash') || jsonb_build_object('state','revoked'),
+ version=version+1,updated_at=now() WHERE kind='assistant_auth_attempt';
+UPDATE documents SET data=data || jsonb_build_object('authenticated',false,'confirmed_generation',NULL,'pending_attempt',NULL,
+ 'generation',GREATEST(COALESCE((data->>'generation')::bigint,0)+1,(extract(epoch from clock_timestamp())*1000000)::bigint)),
+ version=version+1,updated_at=now() WHERE kind='assistant_auth_control';
+UPDATE documents SET data=data || jsonb_build_object('active_run_id',NULL),version=version+1,updated_at=now()
+ WHERE kind='assistant_conversation';
+UPDATE documents SET data=data || jsonb_build_object('status','failed'),version=version+1,updated_at=now()
+ WHERE kind='assistant_message' AND data->>'status' IN ('queued','running','streaming');
 COMMIT;
 """
 
@@ -152,7 +177,7 @@ def replay_ledger(env,config,database,ledger):
     # A single base64 COPY field carries JSON as data; no provider IDs or user text enter SQL syntax.
     payload=base64.b64encode(json.dumps(clean['entries'],separators=(',',':')).encode()).decode()
     result=json.loads(psql(env,config,database,REPLAY_SQL.format(payload=payload)))
-    if result['resurrected_calls']!=0:raise RuntimeError('deletion_ledger_replay_failed')
+    if result['resurrected_calls']!=0 or result['resurrected_subjects']!=0:raise RuntimeError('deletion_ledger_replay_failed')
     return result
 
 def media_path(row):
@@ -205,13 +230,14 @@ def verify(env,directory,deletion_ledger=None):
         counts=json.loads(psql(env,config,database,COUNTS_SQL))
         if counts!=manifest['counts']:raise RuntimeError('restored_counts_mismatch')
         replay=replay_ledger(env,config,database,ledger)
+        psql(env,config,database,ASSISTANT_REVOKE_SQL)
         invoke(['docker','volume','create',volume],stdout=subprocess.PIPE)
         with (directory/'media.tar.gz').open('rb')as f:invoke(['docker','run','--rm','-i','-v',volume+':/restore','busybox:1.37','tar','-xzf','-','-C','/restore'],stdin=f,stdout=subprocess.PIPE)
         rows=psql(env,config,database,"SELECT json_build_object('organization_id',organization_id,'path',data->>'path') FROM documents WHERE kind='recording' AND ((data->>'ready')='true' OR (data->>'state')='ready')")
         ready=[json.loads(raw)for raw in rows.splitlines()if raw]
         media_result=apply_media_plan(volume,replay['media'],ready)
         print(json.dumps({'isolated_restore_verified':True,'counts':counts,'ready_media_verified':len(ready),
-         'sessions_revoked':True,'restored_into_original_database':False,'deletion_ledger_entries':replay['ledger_entries'],
+         'sessions_revoked':True,'assistant_access_revoked':True,'assistant_credentials_purged':True,'codex_relogin_required':True,'restored_into_original_database':False,'deletion_ledger_entries':replay['ledger_entries'],
          'documents_removed_after_backup':replay['removed_documents'],'unreferenced_deleted_media_absent':True,
          'shared_media_retained':media_result['shared_media_retained'],'no_resurrection':True}))
     finally:

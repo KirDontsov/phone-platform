@@ -155,7 +155,7 @@ class BackupSafetyTests(unittest.TestCase):
 
     def test_replay_transmits_validated_json_as_copy_data(self):
         ledger=self.ledger();config=backup.configuration(self.env)
-        expected={'removed_documents':3,'ledger_entries':1,'media':[],'resurrected_calls':0}
+        expected={'removed_documents':3,'ledger_entries':1,'media':[],'resurrected_calls':0,'resurrected_subjects':0}
         with mock.patch.object(backup,'psql',return_value=json.dumps(expected))as psql:
             result=backup.replay_ledger(self.env,config,'phone_restore_test',ledger)
         self.assertEqual(result,expected)
@@ -163,9 +163,10 @@ class BackupSafetyTests(unittest.TestCase):
         encoded=statement.split('COPY replay_input FROM STDIN;\n',1)[1].split('\n',1)[0]
         self.assertEqual(json.loads(base64.b64decode(encoded)),backup.validated_ledger(ledger)['entries'])
         self.assertNotIn(ledger['entries'][0]['provider_id'],statement)
-        with mock.patch.object(backup,'psql',return_value=json.dumps(dict(expected,resurrected_calls=1))):
-            with self.assertRaisesRegex(RuntimeError,'deletion_ledger_replay_failed'):
-                backup.replay_ledger(self.env,config,'phone_restore_test',ledger)
+        for changed in ({'resurrected_calls':1},{'resurrected_subjects':1}):
+            with self.subTest(changed=changed),mock.patch.object(backup,'psql',return_value=json.dumps(dict(expected,**changed))):
+                with self.assertRaisesRegex(RuntimeError,'deletion_ledger_replay_failed'):
+                    backup.replay_ledger(self.env,config,'phone_restore_test',ledger)
 
     def test_media_plan_is_one_container_and_paths_are_stdin_data(self):
         org=self.ledger()['entries'][0]['organization_id']
@@ -209,7 +210,7 @@ class BackupSafetyTests(unittest.TestCase):
             statements.append((database,sql))
             if sql==backup.LEDGER_SQL:return json.dumps(ledger['entries'])
             if sql==backup.COUNTS_SQL:return json.dumps(manifest['counts'])
-            if 'COPY replay_input FROM STDIN' in sql:return json.dumps({'removed_documents':2,'ledger_entries':1,'media':[deleted],'resurrected_calls':0})
+            if 'COPY replay_input FROM STDIN' in sql:return json.dumps({'removed_documents':2,'ledger_entries':1,'media':[deleted],'resurrected_calls':0,'resurrected_subjects':0})
             if "kind='recording'" in sql:return json.dumps(ready)
             return ''
         with mock.patch.object(backup,'invoke',side_effect=invoke),mock.patch.object(backup,'psql',side_effect=psql), \
@@ -220,8 +221,9 @@ class BackupSafetyTests(unittest.TestCase):
         self.assertNotEqual(created,'phone_fixture')
         restores=[command for command,kw in commands if 'pg_restore' in command]
         self.assertEqual(restores[0][restores[0].index('-d')+1],created)
-        mutating=[(database,sql)for database,sql in statements if 'DELETE FROM sessions' in sql or 'COPY replay_input' in sql]
+        mutating=[(database,sql)for database,sql in statements if 'DELETE FROM sessions' in sql or 'COPY replay_input' in sql or sql==backup.ASSISTANT_REVOKE_SQL]
         self.assertTrue(all(database==created for database,sql in mutating))
+        self.assertIn((created,backup.ASSISTANT_REVOKE_SQL),statements,'Restore must execute assistant authority reset in the isolated database')
         baseline=next(i for i,(_,sql)in enumerate(statements)if sql==backup.COUNTS_SQL)
         replay=next(i for i,(_,sql)in enumerate(statements)if 'COPY replay_input' in sql)
         self.assertLess(baseline,replay)
@@ -232,6 +234,134 @@ class BackupSafetyTests(unittest.TestCase):
         self.assertEqual(result['documents_removed_after_backup'],2)
         cleanup.assert_called_once()
         self.assertEqual(cleanup.call_args.args[0][0:3],['docker','volume','rm'])
+
+
+    def test_snapshot_media_archive_never_mounts_assistant_auth_volume(self):
+        """Auth-cache exclusion is checked at the archive boundary, not a manifest claim."""
+        destination=self.root/'assistant-backup'
+        commands=[]
+        def invoke(command,**kwargs):
+            commands.append(command)
+            if command[-4:]==['ps','--services','--status','running']:
+                return subprocess.CompletedProcess(command,0,stdout='api\nworker\nassistant-runner\n')
+            if 'pg_dump' in command:
+                kwargs['stdout'].write(b'synthetic database dump')
+            elif 'psql' in command:
+                return subprocess.CompletedProcess(command,0,stdout=json.dumps({'organizations':1,'users':1,'documents':0,'jobs':0}))
+            elif command[:2]==['docker','run']:
+                kwargs['stdout'].write(b'synthetic media archive')
+            return subprocess.CompletedProcess(command,0,stdout='')
+        with mock.patch.object(backup,'invoke',side_effect=invoke),mock.patch.object(backup,'volume_name',return_value='synthetic-media')as volume,mock.patch('builtins.print'):
+            backup.backup(self.env,destination)
+        volume.assert_called_once_with(self.env,'api','/app/media')
+        archive_commands=[command for command in commands if command[:2]==['docker','run']]
+        self.assertEqual(len(archive_commands),1)
+        command=archive_commands[0]
+        self.assertEqual(command[command.index('-v')+1],'synthetic-media:/source:ro')
+        self.assertFalse(any('assistant-auth' in arg or 'auth.json' in arg for arg in command))
+        self.assertEqual(set(json.loads((destination/'manifest.json').read_text())['sha256']),{'database.dump','media.tar.gz'})
+
+
+@unittest.skipUnless(os.environ.get('PHONE_BACKUP_PG_TESTS')=='1','requires explicit isolated PostgreSQL backup fixture')
+class AssistantRestorePostgresTests(unittest.TestCase):
+    """Execute actual replay/reset SQL in a newly created disposable DB, never source DB."""
+    @classmethod
+    def setUpClass(cls):
+        cls.env=backup.ROOT/'.env.platform'
+        cls.config=backup.configuration(cls.env)
+        cls.database='phone_assistant_restore_'+uuid.uuid4().hex[:12]
+        if cls.database==cls.config['POSTGRES_DB'] or not cls.database.startswith('phone_assistant_restore_'):
+            raise RuntimeError('isolated_assistant_restore_database_required')
+        backup.invoke(backup.db_command(cls.env,['createdb','-U',cls.config['POSTGRES_USER'],cls.database]),stdout=subprocess.PIPE)
+        try:
+            migration=(backup.ROOT/'crates/persistence/migrations/0001_access/up.sql').read_text()
+            backup.psql(cls.env,cls.config,cls.database,migration)
+        except BaseException:
+            cls.tearDownClass()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        backup.invoke(backup.db_command(cls.env,['dropdb','-U',cls.config['POSTGRES_USER'],'--if-exists',cls.database]),stdout=subprocess.PIPE)
+
+    def sql(self,statement):
+        self.assertNotEqual(self.database,self.config['POSTGRES_DB'])
+        return backup.psql(self.env,self.config,self.database,statement)
+
+    def setUp(self):
+        self.sql('TRUNCATE organizations,users CASCADE;')
+        self.org=str(uuid.uuid4());self.foreign=str(uuid.uuid4());self.user=str(uuid.uuid4())
+        self.sql("INSERT INTO organizations(id,name) VALUES('"+self.org+"','Synthetic assistant restore'),('"+self.foreign+"','Foreign restore canary');"+
+                 "INSERT INTO users(id,email,name,password_hash) VALUES('"+self.user+"','synthetic@example.test','Synthetic','unused');"+
+                 "INSERT INTO memberships(organization_id,user_id,role) VALUES('"+self.org+"','"+self.user+"','owner');")
+
+    def docs(self,rows):
+        payload=base64.b64encode(json.dumps(rows).encode()).decode()
+        self.sql("INSERT INTO documents(organization_id,id,kind,parent_id,data) SELECT organization_id,id,kind,parent_id,data FROM jsonb_to_recordset(convert_from(decode('"+payload+"','base64'),'UTF8')::jsonb) AS x(organization_id UUID,id UUID,kind TEXT,parent_id UUID,data JSONB);")
+
+    def doc(self,id,document_kind,parent=None,org=None,**data):
+        return {'organization_id':org or self.org,'id':id,'kind':document_kind,'parent_id':parent,'data':data}
+
+    def test_deleted_assistant_subjects_and_children_do_not_resurrect_or_cross_tenants(self):
+        ids={name:str(uuid.uuid4())for name in ['conversation','message','run','receipt','child_credential','standalone_credential','call','live_chat','foreign_chat','foreign_call','old_call_subject']}
+        provider='shared-provider-fixture'
+        self.docs([
+            self.doc(ids['conversation'],'assistant_conversation',text='Deleted synthetic history'),
+            self.doc(ids['message'],'assistant_message',ids['conversation'],text='Deleted synthetic message'),
+            self.doc(ids['run'],'assistant_run',ids['conversation'],state='completed'),
+            self.doc(ids['receipt'],'assistant_tool_receipt',ids['run'],state='completed'),
+            self.doc(ids['child_credential'],'assistant_credential',ids['conversation'],config_encrypted='deleted-ciphertext'),
+            self.doc(ids['standalone_credential'],'assistant_credential',config_encrypted='deleted-independent-ciphertext'),
+            self.doc(ids['call'],'call',provider_id=provider),
+            self.doc(ids['live_chat'],'assistant_conversation',provider_id=provider,text='Must survive provider-ID matching'),
+            self.doc(ids['foreign_chat'],'assistant_conversation',org=self.foreign,provider_id=provider,text='Foreign private history'),
+            self.doc(ids['foreign_call'],'call',org=self.foreign,provider_id=provider),
+        ])
+        entries=[{'organization_id':self.org,'subject_id':ids[name],'provider_id':None,'deleted_at':'2026-11-12T00:00:00+00:00'}for name in ['conversation','standalone_credential']]
+        entries.append({'organization_id':self.org,'subject_id':ids['old_call_subject'],'provider_id':provider,'deleted_at':'2026-11-12T00:00:00+00:00'})
+        ledger={'version':1,'exported_at':'2026-11-12T01:00:00+00:00','entries':entries}
+        result=backup.replay_ledger(self.env,self.config,self.database,ledger)
+        self.assertEqual(result['removed_documents'],7)
+        remaining=set(json.loads(self.sql("SELECT COALESCE(json_agg(id::text),'[]') FROM documents;")))
+        self.assertEqual(remaining,{ids['live_chat'],ids['foreign_chat'],ids['foreign_call']})
+        again=backup.replay_ledger(self.env,self.config,self.database,ledger)
+        self.assertEqual(again['removed_documents'],0)
+        self.assertEqual(again['ledger_entries'],3)
+
+    def test_restore_revokes_assistant_authority_auth_and_temporary_ciphertext(self):
+        ids={name:str(uuid.uuid4())for name in ['conversation','message','run','credential','attempt','control','connection']}
+        self.docs([
+            self.doc(ids['conversation'],'assistant_conversation',user_id=self.user,active_run_id=ids['run']),
+            self.doc(ids['message'],'assistant_message',ids['conversation'],user_id=self.user,role='assistant',status='running',text='Durable synthetic partial',run_id=ids['run']),
+            self.doc(ids['run'],'assistant_run',ids['conversation'],user_id=self.user,state='running',capability_hash='stale-turn-hash',assistant_message_id=ids['message'],auth_generation=7),
+            self.doc(ids['credential'],'assistant_credential',ids['conversation'],user_id=self.user,config_encrypted='temporary-ciphertext-must-be-erased'),
+            self.doc(ids['attempt'],'assistant_auth_attempt',ids['control'],user_id=self.user,state='pending',capability_hash='stale-auth-hash',generation=7),
+            self.doc(ids['control'],'assistant_auth_control',user_id=self.user,authenticated=True,confirmed_generation=7,generation=7),
+            self.doc(ids['connection'],'connection',kind='telphin',config_encrypted='permanent-provider-ciphertext-must-remain'),
+        ])
+        self.sql("INSERT INTO sessions(token_hash,user_id,organization_id,csrf_token,expires_at) VALUES('synthetic-session','"+self.user+"','"+self.org+"','synthetic-csrf',now()+interval '1 hour');"+
+                 "INSERT INTO token_grants(token_hash,kind,user_id,expires_at) VALUES('synthetic-invite','invite','"+self.user+"',now()+interval '1 hour');")
+        statement=getattr(backup,'ASSISTANT_REVOKE_SQL',None)
+        self.assertIsInstance(statement,str,'Restore must expose and execute the same complete authority-reset SQL tested here')
+        self.sql('DELETE FROM sessions; UPDATE token_grants SET consumed_at=now();')
+        self.sql(statement)
+        rows=json.loads(self.sql("SELECT COALESCE(json_agg(json_build_object('id',id,'kind',kind,'data',data)),'[]') FROM documents;"))
+        by_id={row['id']:row['data']for row in rows}
+        self.assertEqual(by_id[ids['run']]['state'],'interrupted')
+        self.assertNotIn('capability_hash',by_id[ids['run']])
+        self.assertIsNone(by_id[ids['conversation']].get('active_run_id'))
+        self.assertEqual(by_id[ids['message']]['status'],'failed')
+        self.assertEqual(by_id[ids['message']]['text'],'Durable synthetic partial')
+        self.assertNotIn('temporary-ciphertext-must-be-erased',json.dumps(rows))
+        if ids['attempt']in by_id:
+            self.assertNotEqual(by_id[ids['attempt']].get('state'),'pending')
+            self.assertNotIn('capability_hash',by_id[ids['attempt']])
+        if ids['control']in by_id:
+            self.assertIsNot(by_id[ids['control']].get('authenticated'),True)
+            self.assertIsNone(by_id[ids['control']].get('confirmed_generation'))
+        self.assertEqual(by_id[ids['connection']]['config_encrypted'],'permanent-provider-ciphertext-must-remain')
+        sessions=json.loads(self.sql("SELECT json_build_object('sessions',(SELECT count(*) FROM sessions),'unused_grants',(SELECT count(*) FROM token_grants WHERE consumed_at IS NULL));"))
+        self.assertEqual(sessions,{'sessions':0,'unused_grants':0})
 
 
 if __name__ == '__main__':

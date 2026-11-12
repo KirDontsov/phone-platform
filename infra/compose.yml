@@ -51,6 +51,23 @@ services:
     depends_on:
       api: {condition: service_healthy}
     volumes: ["media:/app/media"]
+  assistant-runner:
+    build: {context: .., dockerfile: infra/assistant-runner/Dockerfile}
+    environment:
+      ASSISTANT_RUNNER_TOKEN: ${ASSISTANT_RUNNER_TOKEN:?run setup-local.py}
+      ASSISTANT_API_URL: http://api:8080
+    expose: ["8091"]
+    volumes: ["assistant_auth:/var/lib/assistant-auth"]
+    read_only: true
+    user: "10001:10001"
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777"]
+    mem_limit: 1g
+    pids_limit: 128
+    stop_grace_period: 15s
+    restart: unless-stopped
   client:
     build: {context: .., dockerfile: phone-client/Dockerfile}
     depends_on:
@@ -60,3 +77,4 @@ volumes:
   database:
   broker:
   media:
+  assistant_auth:

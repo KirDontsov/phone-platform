@@ -59,6 +59,19 @@ async fn main() -> std::io::Result<()> {
             return Ok::<(), ApiError>(());
         }
         phone_api::seed::seed_demo(&state).await?;
+        let maintenance_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if phone_api::assistant::maintenance(&maintenance_state)
+                    .await
+                    .is_err()
+                {
+                    eprintln!("assistant_maintenance_failed");
+                }
+            }
+        });
         let bind = std::env::var("API_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
         println!("phone_api_starting");
         HttpServer::new(move || {

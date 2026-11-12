@@ -59,3 +59,9 @@ python3 -m unittest discover -s scripts/tests -p test_backup_tools.py -v
 14 автоматических проверок покрывают checksum/key validation, опасные архивы, приватные файлы, частичную остановку, строгий ledger JSON, безопасную передачу SQL-данных, порядок baseline → replay → media и один helper для множества записей. Дополнительно replay SQL проверен на реальном изолированном PostgreSQL: удалены call/recursive children/provider-ID duplicate и jobs/outbox, другая компания с тем же provider ID сохранена, ledger отсутствующей компании сохранён, повторный replay идемпотентен. Отдельный реальный Docker smoke подтвердил удаление и проверку media с пробелами/специальными символами в имени.
 
 Полный Compose snapshot/restore smoke выполнен:2 организации/4 users/241 documents/9 jobs в baseline,22 ready media references,1 новая deletion ledger entry,5 удалённых после снимка docs. No resurrection=true, shared artifact retained 1; originalDB не менялась, restored sessions/grants отозваны. Агрегаты: `data/eval/backup-verify.json`; это локальное доказательство, без согласованных production RPO/RTO.
+
+## Помощник настройки
+
+Backup не архивирует Docker volume `assistant_auth` с авторизацией Codex. После изолированного restore отзываются сессии/приглашения, capability всех turn/auth attempts, обнуляется подтверждённая авторизация модели, прерываются активные запросы, физически удаляются временные encrypted credentials. Постоянные настройки подключения Телфина сохраняются зашифрованными. Перед использованием помощника нужен новый вход в Codex.
+
+Журнал удалений также применяется к удалённым чатам (включая дочерние сообщения/runs/receipts/credentials) и отдельным временным доступам. Сопоставление provider ID действует только на звонки; UUID и организация — на разрешённые виды документов. Базовые количества проверяются до replay и очистки, поэтому ожидаемое удаление временных данных не маскируется проверкой количества.

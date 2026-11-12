@@ -1,0 +1,18 @@
+{
+  "name": "phone-assistant-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "smoke": "node tests/runtime-smoke.mjs"
+  },
+  "dependencies": {
+    "@openai/codex": "0.167.2",
+    "@modelcontextprotocol/sdk": "1.32.2"
+  }
+}
