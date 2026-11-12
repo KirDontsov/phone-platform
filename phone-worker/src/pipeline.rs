@@ -556,34 +556,8 @@ impl Worker {
         if run["state"] == "completed" {
             return Ok(());
         }
-        let end = if let Some(v) = run["to"].as_str() {
-            providers::parse_utc(v)?
-        } else {
-            job.payload["to"]
-                .as_str()
-                .map(parse_input_date)
-                .transpose()?
-                .unwrap_or_else(|| DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap())
-        };
         let all = job.payload["all_available"].as_bool().unwrap_or(false);
-        let start = if let Some(v) = run["from"].as_str() {
-            providers::parse_utc(v)?
-        } else if all {
-            config["history_start"]
-                .as_str()
-                .map(parse_input_date)
-                .transpose()?
-                .unwrap_or(end - chrono::Duration::days(364))
-        } else {
-            job.payload["from"]
-                .as_str()
-                .map(parse_input_date)
-                .transpose()?
-                .unwrap_or(end - chrono::Duration::days(30))
-        };
-        if start >= end || end - start > chrono::Duration::days(3650) {
-            return Err(ProviderError::permanent("invalid_sync_period"));
-        }
+        let (start, end) = sync_range(&config, &job.payload, &run, Utc::now())?;
         let coverage_from = if run.get("coverage_goal_from").is_some() {
             run["coverage_goal_from"]
                 .as_str()
@@ -1631,6 +1605,7 @@ fn verified_coverage_goal(
         && config["history_start_verified"] == true
         && config["history_start"]
             .as_str()
+            .map(str::trim)
             .and_then(|t| parse_input_date(t).ok())
             == Some(start)
     {
@@ -1644,6 +1619,49 @@ fn verified_coverage_goal(
         .as_str()
         .and_then(|t| providers::parse_utc(t).ok())?;
     (coverage["verified"] == true && from <= start && start <= to && to <= end).then_some(from)
+}
+/// Resolve optional requested bounds while preserving persisted checkpoint bounds.
+fn sync_range(
+    config: &Value,
+    payload: &Value,
+    run: &Value,
+    now: DateTime<Utc>,
+) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+    let end = if let Some(v) = run["to"].as_str() {
+        providers::parse_utc(v)?
+    } else {
+        payload["to"]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(parse_input_date)
+            .transpose()?
+            .unwrap_or_else(|| DateTime::from_timestamp(now.timestamp(), 0).unwrap())
+    };
+    let all = payload["all_available"].as_bool().unwrap_or(false);
+    let start = if let Some(v) = run["from"].as_str() {
+        providers::parse_utc(v)?
+    } else if all {
+        config["history_start"]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(parse_input_date)
+            .transpose()?
+            .unwrap_or(end - chrono::Duration::days(364))
+    } else {
+        payload["from"]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(parse_input_date)
+            .transpose()?
+            .unwrap_or(end - chrono::Duration::days(30))
+    };
+    if start >= end || end - start > chrono::Duration::days(3650) {
+        return Err(ProviderError::permanent("invalid_sync_period"));
+    }
+    Ok((start, end))
 }
 fn parse_input_date(value: &str) -> Result<DateTime<Utc>> {
     use chrono::Timelike;
@@ -2178,6 +2196,111 @@ impl Drop for MediaArtifact {
 #[cfg(test)]
 mod media_tests {
     use super::*;
+    #[test]
+    fn sync_range_blank_history_start_uses_unverified_default() {
+        let now = providers::parse_utc("2026-11-12T12:34:56.789Z").unwrap();
+        let end = parse_input_date("2026-11-12T12:34:56Z").unwrap();
+        for value in [Value::Null, json!(""), json!(" \t\n")] {
+            let config = json!({"history_start":value,"history_start_verified":true});
+            let (start, actual_end) =
+                sync_range(&config, &json!({"all_available":true}), &json!({}), now).unwrap();
+            assert_eq!(
+                (start, actual_end),
+                (end - chrono::Duration::days(364), end)
+            );
+            assert_eq!(
+                verified_coverage_goal(&json!({}), &config, start, end, true),
+                None
+            );
+        }
+    }
+    #[test]
+    fn sync_range_blank_optional_bounds_use_default_period() {
+        let now = parse_input_date("2026-11-12T12:34:56Z").unwrap();
+        for value in [Value::Null, json!(""), json!(" \t\n")] {
+            let payload = json!({"from":value,"to":value});
+            assert_eq!(
+                sync_range(&json!({}), &payload, &json!({}), now).unwrap(),
+                (now - chrono::Duration::days(30), now)
+            );
+        }
+    }
+    #[test]
+    fn sync_range_preserves_explicit_dates_and_checkpoint_precedence() {
+        let now = parse_input_date("2026-11-12").unwrap();
+        let start = parse_input_date("2026-01-01").unwrap();
+        let end = parse_input_date("2026-02-01").unwrap();
+        assert_eq!(
+            sync_range(
+                &json!({}),
+                &json!({"from":"2026-01-01","to":"2026-02-01T03:00:00.999+03:00"}),
+                &json!({}),
+                now
+            )
+            .unwrap(),
+            (start, end)
+        );
+        let run = json!({"from":start,"to":end});
+        assert_eq!(
+            sync_range(
+                &json!({"history_start":"bad"}),
+                &json!({"all_available":true,"from":"bad","to":"bad"}),
+                &run,
+                now
+            )
+            .unwrap(),
+            (start, end)
+        );
+        assert_eq!(
+            sync_range(
+                &json!({"history_start":" 2026-01-01 "}),
+                &json!({"all_available":true,"to":" 2026-02-01 "}),
+                &json!({}),
+                now
+            )
+            .unwrap(),
+            (start, end)
+        );
+    }
+    #[test]
+    fn sync_range_rejects_bad_nonempty_inputs_and_strict_checkpoints() {
+        let now = parse_input_date("2026-11-12").unwrap();
+        for (config, payload, run) in [
+            (
+                json!({"history_start":"broken"}),
+                json!({"all_available":true}),
+                json!({}),
+            ),
+            (json!({}), json!({"from":"broken"}), json!({})),
+            (json!({}), json!({"to":"broken"}), json!({})),
+            (json!({}), json!({}), json!({"from":""})),
+            (json!({}), json!({}), json!({"to":""})),
+            (json!({}), json!({}), json!({"from":"broken"})),
+            (json!({}), json!({}), json!({"to":"broken"})),
+        ] {
+            assert_eq!(
+                sync_range(&config, &payload, &run, now).unwrap_err().code,
+                "invalid_provider_timestamp"
+            );
+        }
+    }
+    #[test]
+    fn sync_range_enforces_order_and_maximum_duration() {
+        let now = parse_input_date("2026-11-12").unwrap();
+        for from in [
+            now,
+            now + chrono::Duration::seconds(1),
+            now - chrono::Duration::days(3651),
+        ] {
+            assert_eq!(
+                sync_range(&json!({}), &json!({"from":from,"to":now}), &json!({}), now)
+                    .unwrap_err()
+                    .code,
+                "invalid_sync_period"
+            );
+        }
+    }
+
     #[test]
     fn imported_employee_uses_only_local_membership_mapping_and_preserves_manual_fields() {
         let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
