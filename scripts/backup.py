@@ -150,6 +150,14 @@ COMMIT;
 """
 
 
+# A restore cannot revive pending signup proofs, including a recently consumed OTP.
+# Older snapshots legitimately have no registration table.
+REGISTRATION_REVOKE_SQL = """DO $$ BEGIN
+IF to_regclass('public.registration_challenges') IS NOT NULL THEN
+ DELETE FROM registration_challenges;
+END IF;
+END $$;"""
+
 # Restored DB snapshots cannot resume assistant capabilities or revive temporary secrets.
 # The Codex auth volume is deliberately absent from the backup; a fresh login is required.
 ASSISTANT_REVOKE_SQL = r"""
@@ -227,6 +235,7 @@ def verify(env,directory,deletion_ledger=None):
     try:
         with (directory/'database.dump').open('rb')as f:invoke(db_command(env,['pg_restore','-U',config['POSTGRES_USER'],'-d',database,'--no-owner','--no-acl','--exit-on-error']),stdin=f,stdout=subprocess.PIPE)
         psql(env,config,database,'DELETE FROM sessions; UPDATE token_grants SET consumed_at=now();')
+        psql(env,config,database,REGISTRATION_REVOKE_SQL)
         counts=json.loads(psql(env,config,database,COUNTS_SQL))
         if counts!=manifest['counts']:raise RuntimeError('restored_counts_mismatch')
         replay=replay_ledger(env,config,database,ledger)

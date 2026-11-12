@@ -1,0 +1,15 @@
+# Phase16 summary
+
+Публичная регистрация с обязательным подтверждением email опубликована на https://phone.bondscan.ru/register; runtimeimages15-98b53e7, schema2,8healthyservices. Code98b53e7 опубликован вGitHub/master. Существующие data/runtime secrets/учётные записи сохранены, phase12stash не возобновлялся.
+
+Research реального Bondscan OTPflow (без.env/auth/БД/секретов) → первоначальный immediate-signupplan отменён уточнением пользователя, не публиковался → revisedPLAN-CHECK PASS1/3 → execute → independentreview/fixesPASS → nativebuild → productionverifierPASS → automatedUAT. HumanUAT/inboxpending, acceptedphasecount не увеличен.
+
+Register202 означает принятый SMTPкод, отдельный pendingrequest и HttpOnlybrowsernonce, безuser/org/appsession. Verify6digits15min+nonceORoriginalpasswordproof atomically createsuser/newemptyorg/owner/audit/session, consumesproof. Контроль5badattempts, resend60s/codegenerationrotation, typedfields/origin/rateboundedguards; SMTPfailure503 честен, duplicate409 не меняет пароль. Explicitv2migration и boundedSKIPLOCKEDexpirycleanup, noexistingusercolumnchanges. Известный OTP не даёт unlimitedpasswordguesses; неизвестные обафактора не могут сжечь чужойкод.
+
+Собственный SMTPrelay nonroot/read-only/capdrop, bind/range только exactPhonesubnetgateway, hostPostfixloopback; чужиеcredentials и MTAconfig не менялись. Dynamicmetadata только ownproductionenv, SPF/rDNS/EHLO verified; DKIM/inboxplacement не заявлены. UI/register/verify/resend, querystripbeforePOST, crossbrowserpasswordfallback, толькоemailвsessionStorage. Existinginvite/reset/login preserved.
+
+Проверки:8realPG/SMTP HTTP (6new+2platform),90frontendunits/typecheck/build,2actualMailpitChrome(manualOTP/newbrowsermagiclinkPW/mobile390),18backupchecks включаяновуюреальнуюPGrevocationcase. RED3frontend +isolatedPGPWcountermutation +missingendpointoldproduction404 +backupDELETEremovedmutation; activecode/cache не мутировались. ProductionChromeform/negativeOTP/noappsession, oldowner3passwords/tenant/header/foreign404/mediaRange206/Codextrue, doctor, SMTPownnetwork250/foreignDENY/publicclosed, schema[1,2]/oldusers6/org2/member6/pending0atrollout. Независимый verifier повторил livechecks; realGmail/messages0 и providerrequests0 во время deploymentprobes.
+
+Исправления review: persistentwrongPWcounter при knownOTP, cleanupвнеperemaillock+SKIPLOCKED/recheck. Coldpool warmup1 сохраняет max12 и устраняет startupwaiting12coldconnections. Testharness проблемы (BSDacceptednonblockingTCP/MIMEbase64/internal503baseline/mobilemenu) исправлены без ослабления productchecks. Новые backupverificationproofs отзываются при isolatedrestore с поддержкойlegacytableabsence; ручнойproductionrestore требует того же шага доAPI.
+
+Predeploydump только собственнойproductionDB сохранён0600/HDD; обновленытолькоimages/tag, никакогоrestore/очисткиuserданных. ВсеownPG/Mailpit/SSH/nativeAPI/Vitefixtures убраны, productionSMTP/analyzer/volumes/cache/backups сохранены. Finalownersteps16-UAT.md, эксплуатацияdocs/release-runbook.md.

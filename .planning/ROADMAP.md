@@ -163,4 +163,4 @@ Research→independentPLAN-CHECK PASS0/3→execute completed→independentreview
 **Goal:** public/register → настоящее письмо с6digitcode → подтверждение → свояизолированнаякомпания/owner/session.
 **Depends on:** Phases2,15; phase12paused.
 **Plan:**16-01 pendingverificationAPI+v2migration; register/verifyUI; ownSMTPtransport/release/UAT.
-Research→PLAN-CHECKoriginalsupersededuseremailrequirement→revision1PASS→execute→independentreviewPASS. BackendrealPG/SMTP8/8,frontend90/90,realMailpitChrome2/2PASS. Releasebuild/prodverifierpending. No SMTPskip/fakeverification, no identity beforeOTP; browserbinding/passwordfallback preventsunsolicitedmailpre-hijack.
+Research→PLAN-CHECKoriginalsupersededuseremailrequirement→revision1PASS→execute→independentreviewPASS. BackendrealPG/SMTP8/8,frontend90/90,realMailpitChrome2/2PASS. Nativeimages15-98b53e7/production8healthy/schema2→independentVERIFICATIONPASS→automatedUATPASS; Gmailinbox/humanUATpending. Backup18+revocationREDPASS, ownfixturescleaned. No SMTPskip/fakeverification, no identity beforeOTP; browserbinding/passwordfallback preventsunsolicitedmailpre-hijack.

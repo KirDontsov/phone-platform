@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_16_release_in_progress
-stopped_at: Phase16 verified-email registration implemented/reviewed/local SMTP-PG-browser checks PASS; release build in progress; phase12 paused
+status: phase_16_automated_verified_human_uat_pending
+stopped_at: Phase16 email-confirmed registration deployed15-98b53e7, independent verifier/automated UAT PASS, real Gmail/user UAT pending; phase12 paused
 last_updated: "2026-11-12"
 progress:
   total_phases: 16
-  implemented_phases: 14
-  locally_verified_phases: 14
+  implemented_phases: 15
+  locally_verified_phases: 15
   accepted_phases: 0
   completed_phases: 0
   total_plans: 35
-  implemented_plans: 32
+  implemented_plans: 33
   completed_plans: 1
 ---
 
@@ -22,7 +22,7 @@ progress:
 
 Явно потребована публичная регистрация и подтверждение почты как Bondscan. Immediate-signupdraft отменён пользователем и не публиковался; revisedPLAN-CHECK PASS1/3. Реализованы pendingtable/v2migration безuser/org/session доOTP,6digitcode15мин/resend60сек, nonceORoriginalpasswordproof длядругогобраузера, persistent5attempts/одноразовыйcommit/newemptytenant; существующиепользователи/пароли/данные не меняются. Собственный privateCIDR SMTPbridge кhostPostfixhealthy, nohostMTAchanges/чужихсекретов, SPF/rDNS/protocolpath проверены; Gmailinboxнепроверялся.
 
-ImplementationreviewPASS после2fixes: PWbruteforcecounterприknownOTP, cleanupвнеperemailtransaction+SKIPLOCKED/expiredrecheck. РеальнаяизолированнаяPG+SMTP8/8PASS (6registration+2platform), frontend90/90/typecheck/build, actualMailpitChrome2/2(manualOTP/newbrowserlink+PW/mobile390). RED3frontend иisolatedPGPWcounter+oldproductionregister404 подтверждены. LocalDockerVM былполон; ownisolatedremotePG/Mailpit/SSHfixtures использованыбезprodDB; удалёнтолькоunusedownphase14probeimage, никакихsharedprune/restart. Sourcecodecommit/build/productionverifierвработе, финальныйhumanUATпослерелиза.
+ImplementationreviewPASS после2fixes: PWbruteforcecounterприknownOTP, cleanupвнеperemailtransaction+SKIPLOCKED/expiredrecheck. РеальнаяизолированнаяPG+SMTP8/8PASS (6registration+2platform), frontend90/90/typecheck/build, actualMailpitChrome2/2(manualOTP/newbrowserlink+PW/mobile390). RED3frontend иisolatedPGPWcounter+oldproductionregister404 подтверждены. LocalDockerVM былполон; ownisolatedremotePG/Mailpit/SSHfixtures использованыбезprodDB; удалёнтолькоunusedownphase14probeimage, никакихsharedprune/restart. Sourcecode98b53e7/GitHub и все5images15-98b53e7 опубликованы, production8healthy/schema2, независимыйverifierPASS. PublicChromeформы/неверныйOTP400/me401/querystrip/mobile390, старыеownerлогин/аудио/Codex/tunnelPASS; users6/org2/members6/pending0наактивации, ниодногоGmailаккаунтазаuserне создано. Backup18/18включаяновуюPGочисткуpendingOTPприisolatedrestore+REDPASS; manualproductionrestore обязанотозватьproofsдоAPI. Всеownfixturesубраны. ФинальныйhumanUAT/личныйGmailpending, см.16-UAT.md; подтверждениепочтыобязательно, nofakeSMTPsuccess.
 
 ## История реализации — фаза15
 

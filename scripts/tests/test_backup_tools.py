@@ -295,6 +295,16 @@ class AssistantRestorePostgresTests(unittest.TestCase):
                  "INSERT INTO users(id,email,name,password_hash) VALUES('"+self.user+"','synthetic@example.test','Synthetic','unused');"+
                  "INSERT INTO memberships(organization_id,user_id,role) VALUES('"+self.org+"','"+self.user+"','owner');")
 
+    def test_restore_revokes_pending_registration_proofs_without_touching_users(self):
+        # Legacy snapshots: safe when no table exists. New snapshots: no OTP revival.
+        self.sql(backup.REGISTRATION_REVOKE_SQL)
+        self.sql((backup.ROOT/'crates/persistence/migrations/0002_registration/up.sql').read_text())
+        before=self.sql("SELECT json_build_object('users',(SELECT count(*) FROM users),'orgs',(SELECT count(*) FROM organizations));")
+        self.sql("INSERT INTO registration_challenges(email,id,name,organization_name,password_hash,code_hash,browser_hash,expires_at,send_state) VALUES('pending@example.test',gen_random_uuid(),'Synthetic','Synthetic','unused-password-hash','unused-code-hash','unused-browser-hash',now()+interval '15 minutes','sent');")
+        self.sql(backup.REGISTRATION_REVOKE_SQL)
+        self.assertEqual(self.sql('SELECT count(*) FROM registration_challenges;'),'0')
+        self.assertEqual(self.sql("SELECT json_build_object('users',(SELECT count(*) FROM users),'orgs',(SELECT count(*) FROM organizations));"),before)
+
     def docs(self,rows):
         payload=base64.b64encode(json.dumps(rows).encode()).decode()
         self.sql("INSERT INTO documents(organization_id,id,kind,parent_id,data) SELECT organization_id,id,kind,parent_id,data FROM jsonb_to_recordset(convert_from(decode('"+payload+"','base64'),'UTF8')::jsonb) AS x(organization_id UUID,id UUID,kind TEXT,parent_id UUID,data JSONB);")

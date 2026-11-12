@@ -4,7 +4,7 @@ Production: `https://phone.bondscan.ru`, SSH `dks@81.16.141.170`, исходни
 
 Доступы после переноса находятся **только на этом компьютере** в `secrets/production-access.json` (0600), секция `accounts`, основной аккаунт `owner@demo.local`. Известные локальные demo-пароли на публичном сайте отозваны. `secrets/production.env` — отдельная защищённая копия server runtime; ENCRYPTION_KEY сохранён для уже настроенных подключений. Эти файлы не коммитить и не отправлять в чат. Локальный `localhost:18081` — прежняя среда, не production; её writers после cutover остановлены, данные сохранены для отката.
 
-На сервере Mailpit выключен, SMTP пока отсутствует: вход работает, приглашения и сброс пароля по почте требуют собственной SMTP-конфигурации. Расшифровка требует ключа OpenRouter компании в интерфейсе; авторизация Codex не оплачивает OpenRouter.
+На сервере Mailpit выключен. Phone отправляет письма через собственный privateSMTPrelay к существующему hostPostfix; секреты других проектов не используются, его конфигурация не менялась. Регистрация требует шестизначного кода из письма:15минут, повтор через60секунд; до подтверждения новые account/company/session не создаются. Новая компания пустая и изолирована от перенесённых данных. Расшифровка требует ключа OpenRouter компании в интерфейсе; авторизация Codex не оплачивает OpenRouter.
 
 ## Управление установленной версией
 
@@ -61,3 +61,13 @@ docker run --rm --security-opt apparmor=unconfined --network host --pid host \
 Периодически проверяйте: `/ready`, свежесть worker heartbeat, failed/retry jobs, sync lag/coverage, свободное место media/DB, доставку SMTP и age последнего проверенного backup. «Операции» показывает ошибки и задания; внешняя система оповещений на сервере настраивается оператором.
 
 Проверенный выпуск 12.11.2026: images `15-5789727`, пять собственных образов amd64, PostgreSQL/RabbitMQ и все пять сервисов healthy; HTTPS certificate/renewal dry-run, публичный Python/Chrome smoke и настоящий local analyzer tunnel PASS. Baseline переноса:759calls/614readyrecordings/2organizations, все614readymedia проверены,5encryptedconnections расшифрованы; доступ Codex сохранён. Снимок `data/backups/production-20261112` содержит исходную БД/media/auth и manifest, доступен только локально/оператору. Не запускай `scripts/dev.sh up` на старых локальных томах одновременно с production writers: это снова включит старый worker и скопированную авторизацию Codex. Нужен только `./start-analyzer.sh`.
+
+## Регистрация / выпуск16
+
+Регистрация — https://phone.bondscan.ru/register, подтверждение —6цифр из письма или ссылка. В другом браузере требуется также пароль регистрации. Код одноразовый,15минут,5неверных попыток, resend60секунд. Никаких OTP/password в обычных логах или browserstorage. Pendingemail хранится отдельно от пользователей и очищается после срока хранения.
+
+SMTP runtime: gateway своей Dockerсети в `SMTP_HOST`,1587в`SMTP_PORT`, `SMTP_TLS=false` только на privatebridge, собственный sender phone.bondscan.ru. `PHONE_SMTP_BIND_ADDRESS`/`PHONE_SMTP_ALLOWED_RANGE` берутся из actualIPAM `phone-platform_default`; для чистой установки сначала запустите db/rabbitmq только с базовым compose, проверьте `docker network inspect phone-platform_default`, затем задайте эти параметры перед productionoverlay. HostMTA должен принимать loopbacksubmission; на другом сервере нужен собственный рабочий почтовый транспорт. Не расширяйте relay до publicbind/чужих подсетей, не копируйте чужие SMTPaccounts.
+
+После ручного disasterrestore до запуска API отзовите sessions/grants/assistantcapabilities и очистите `registration_challenges`, если таблица есть: нельзя оживлять использованные OTP из снимка. `scripts/backup.py` содержит version-safe `REGISTRATION_REVOKE_SQL` и применяет его при **изолированной проверке восстановления**; это не автоматический productionrestore/cutover. Старые снимки без таблицы поддержаны. Обычное обновление images не восстанавливает и не очищает пользовательские данные.
+
+Выпуск15-98b53e7: schema2,8runningservices включая ownSMTPrelay. Backend realPG/SMTP8/8, frontend90units, MailpitChrome2/2, productionpublicform/negativeOTP/старыеаккаунты PASS. Phone→hostMTA250, чужаясеть/publicportDENY. Конкретное попадание письма в Gmail проверяется пользователем при регистрации: agent его ящик не читал, письмо/аккаунт за него не создавал.
