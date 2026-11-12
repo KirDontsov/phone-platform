@@ -1,0 +1,46 @@
+# REMOTE site overlay. Merge with compose.yml and compose.production.yml, never compose.ai.yml.
+# Interpolation must include --env-file secrets/analyzer-pair.env after .env.platform.
+services:
+  api:
+    environment:
+      MODEL_RUNNER_PASSWORD: ${MODEL_RUNNER_PASSWORD:?provide protected analyzer-pair.env}
+      MODEL_RUNNER_URL: http://model-runner:4096
+  worker:
+    environment:
+      MODEL_RUNNER_PASSWORD: ${MODEL_RUNNER_PASSWORD:?provide protected analyzer-pair.env}
+      MODEL_RUNNER_URL: http://model-runner:4096
+  model-tunnel:
+    build: {context: .., dockerfile: infra/analyzer-tunnel/Dockerfile}
+    entrypoint: [python3, /opt/phone-tunnel/server.py, serve]
+    environment:
+      MODEL_RUNNER_PASSWORD: ${MODEL_RUNNER_PASSWORD:?provide protected analyzer-pair.env}
+    ports: ["127.0.0.1:${PHONE_REMOTE_TUNNEL_SSH_PORT:-18422}:2222"]
+    expose: ["4096"]
+    networks:
+      default:
+        aliases: [model-runner]
+    read_only: true
+    user: "10001:10001"
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ../secrets/analyzer-ssh/id_ed25519.pub
+        target: /config/client_key.pub
+        read_only: true
+        bind: {create_host_path: false}
+      - relay-state:/var/lib/phone-tunnel
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"]
+    mem_limit: 96m
+    pids_limit: 32
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: [CMD, python3, /opt/phone-tunnel/server.py, health]
+      interval: 10s
+      timeout: 6s
+      start_period: 15s
+      retries: 3
+volumes:
+  relay-state:

@@ -2,23 +2,35 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_13_locally_verified_user_uat_pending
-stopped_at: Phase13 implemented and deployed; final user UAT and live ASR/analysis/CRM/Google acceptance pending; phase12 remains paused
+status: phase_14_locally_verified_remote_pairing_pending
+stopped_at: Phase14 local Docker analyzer running and SSH fixture verified; real remote SSH host/pairing and model quality pending; phase12 paused
 last_updated: "2026-11-12"
 progress:
-  total_phases: 13
-  implemented_phases: 12
-  locally_verified_phases: 12
+  total_phases: 14
+  implemented_phases: 13
+  locally_verified_phases: 13
   accepted_phases: 0
   completed_phases: 0
-  total_plans: 32
-  implemented_plans: 30
+  total_plans: 33
+  implemented_plans: 31
   completed_plans: 1
 ---
 
 # Project State
 
-## Текущее состояние — фаза13
+## Текущее состояние — фаза14
+
+Уточнена topology пользователя: удалённый сайт/worker вызываетlocalOpenCodeнаэтомкомпьютеречерезDockerSSHtunnel, one-commandstart-analyzerкакпоидееBondscan. ДоступныйстарыйBondscan startscript исследованбезenv/auth/ключей; скриншотсоответствуетболее новойотсутствующейDockerконфигурации. Phonetransportреализованнезависимо, нечерезегоБД/MQ/secrets.
+
+Выполнены4задачи14-01: hardenedDockerconnector/public4096/nativeOpenCode1.18.10localhost4097; ASRadapterнаfixedOpenRouterSTT; exacttwoIDsmoondream/parakeet-ultra+nvidia/nemotron-3.5-transcribe вconfig/UI; tenantproviderkey отдельноотruntimepairedpassword; private remoterelayDockeraliasmodel-runner иlocalstartup/init/status/doctor/down/pin/reconnect. Nativeanalysis/MCP0/tool-deny/authsessionsсохранены. CallerнеперенаправляетtransportpasswordнаarbitraryURL; provider/baseURLchangeтребуетновыйAPIkey. Longaudiochunks300s/24MiB, numericlabelsunknownroles, RAIIcleanupнаотмене.
+
+Наэтомкомпьютере ./start-analyzer.sh local реальносоздалownPhonekeys/pairing/template0600изапустилphone-analyzer-model-runnerhealthy. Tunnelsне запущеныкреальномусерверу: remoteSSHhost/userнепредоставлены, asyncвопросотправлен. Документированодноразовыйrestrictedpairing, незаимствуютсяBondscanaccounts. MainAPI/worker/client/modelrunnerтакжепересобраны/deployedhealthy, другиепроектыиавторизациясохранены.
+
+Research→PLAN-CHECKPASS0/3→execute→independentreview/fixes→verifier→automatedUAT. GSD-toolsplanstructurevalid4tasks. Node17наhost/Docker,nativepin/auth/config/session/MCP0PASS; genuine2hopSSHremote-workercontainer→relay→localgateway/nativehealth+2modelcatalogPASSсnegative/reconnect/rotation/pairmismatch. Worker45(APIHTTP/protocol/providers/PGpipeline/lib),API/PG3,Python10,frontend75/typecheck/buildPASS. Реальныйbrowserread-onlysettings1440/390PASS,JS0/configwrites0/modelrequests0. ОсновныеREDпроверены,остальныеограничениявsummaries/VERIFICATION. TestDB/isolatedSSHfixturesудалены.
+
+Следующийlivegate: SSHhost/user,ownkeyauthorizationиpairingсреальнымсервером,затемключOpenRouterкомпаниииконтрольнаяASRзапись. Реальныхmodel/Telphin/CRMcallsвфазе14небыло. Инструкцияdocs/local-analyzer.md; финальныйhumanUATphases/14-local-analyzer-opencode/14-UAT.md. Acceptedphasesостаются0; phase12/stashddddf25f4ef384b0a02359042efa4bee159a1f09не трогать.
+
+## История реализации — фаза13
 
 Четыре сценария заказчика закреплены в PROJECT/REQUIREMENTS и docs/customer-workflows.md. Реализованы относительный callback X часов, явный checklist, общие Dashboard/Calls filters, теги/статусы/analysisstate, правая панель разметки, полная ширина/mobile и прозрачная ASR→analysis очередь. Preflight не ставит реальные записи на demoASR, active job dedup атомарен. Текущий анализ/оценка/экспорт привязаны к последней расшифровке; старые результаты и pinned delivery сохранены.
 

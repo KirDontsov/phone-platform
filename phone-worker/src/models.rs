@@ -73,8 +73,14 @@ pub fn normalize_transcript(raw: &Value, duration: f64) -> Result<Value> {
             {
                 return Err(ProviderError::permanent("invalid_transcript_timing"));
             }
-            // Speaker A/B is deliberately NOT mapped to manager/client without channel evidence.
-            segments.push(json!({"id":format!("s{}",index+1),"speaker":row["speaker"].as_str().unwrap_or("unknown"),"role":"unknown","start":start,"end":end,"text":text}));
+            // Labels are identities, not evidence of manager/client roles.
+            let speaker = row["speaker"]
+                .as_str()
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_owned)
+                .or_else(|| row["speaker"].as_u64().map(|n| n.to_string()))
+                .unwrap_or_else(|| "unknown".into());
+            segments.push(json!({"id":format!("s{}",index+1),"speaker":speaker,"role":"unknown","start":start,"end":end,"text":text}));
         }
     } else if let Some(text) = raw["text"].as_str().filter(|s| !s.trim().is_empty()) {
         segments.push(json!({"id":"s1","speaker":"unknown","role":"unknown","start":0,"end":duration.max(0.),"text":text,"timing":"whole_recording_only"}));
@@ -103,6 +109,12 @@ pub async fn transcribe(
         timed_call["duration"] = json!(duration.max(0.));
         return Ok(demo_transcript(&timed_call));
     }
+    if provider == "opencode" {
+        return crate::asr_connector::transcribe(config, path, duration).await;
+    }
+    if !["openai", "http"].contains(&provider) {
+        return Err(ProviderError::permanent("unsupported_asr_provider"));
+    }
     let bytes = tokio::fs::read(path)
         .await
         .map_err(|_| ProviderError::permanent("recording_file_missing"))?;
@@ -110,7 +122,7 @@ pub async fn transcribe(
         return Err(ProviderError::permanent("recording_too_large"));
     }
     let chunks = if bytes.len() > 24 * 1024 * 1024 {
-        split_audio(path).await?
+        split_audio(path, 600).await?
     } else {
         vec![AudioChunk {
             path: path.to_owned(),
@@ -191,10 +203,10 @@ pub async fn transcribe(
         json!({"provider":provider,"state":"ready","language":"ru","role_confidence":"uncertain","segments":combined}),
     )
 }
-struct AudioChunk {
-    path: PathBuf,
-    offset: f64,
-    temporary: bool,
+pub(crate) struct AudioChunk {
+    pub(crate) path: PathBuf,
+    pub(crate) offset: f64,
+    pub(crate) temporary: bool,
 }
 async fn cleanup_chunks(chunks: &[AudioChunk]) {
     if let Some(path) = chunks
@@ -205,18 +217,35 @@ async fn cleanup_chunks(chunks: &[AudioChunk]) {
         let _ = tokio::fs::remove_dir_all(path).await;
     }
 }
-async fn split_audio(path: &Path) -> Result<Vec<AudioChunk>> {
+pub(crate) async fn split_audio(path: &Path, seconds: u32) -> Result<Vec<AudioChunk>> {
+    split_audio_command(path, seconds, std::ffi::OsStr::new("ffmpeg")).await
+}
+struct TemporaryAudioDirectory(Option<PathBuf>);
+impl Drop for TemporaryAudioDirectory {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+}
+async fn split_audio_command(
+    path: &Path,
+    seconds: u32,
+    executable: &std::ffi::OsStr,
+) -> Result<Vec<AudioChunk>> {
     let dir = std::env::temp_dir().join(format!("phone-asr-{}", Uuid::new_v4()));
     tokio::fs::create_dir(&dir)
         .await
         .map_err(|_| ProviderError::permanent("audio_chunk_storage_error"))?;
+    // Own the directory before any cancellable ffmpeg/filesystem await.
+    let mut cleanup = TemporaryAudioDirectory(Some(dir.clone()));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = tokio::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).await;
     }
     let output = dir.join("chunk-%05d.wav");
-    let mut command = Command::new("ffmpeg");
+    let mut command = Command::new(executable);
     command
         .env_clear()
         .env(
@@ -238,7 +267,7 @@ async fn split_audio(path: &Path) -> Result<Vec<AudioChunk>> {
             "-f",
             "segment",
             "-segment_time",
-            "600",
+            &seconds.to_string(),
             "-c:a",
             "pcm_s16le",
         ])
@@ -267,15 +296,60 @@ async fn split_audio(path: &Path) -> Result<Vec<AudioChunk>> {
         let _ = tokio::fs::remove_dir_all(&dir).await;
         return Err(ProviderError::permanent("audio_chunk_count_limit"));
     }
-    Ok(paths
+    let chunks = paths
         .into_iter()
         .enumerate()
         .map(|(i, path)| AudioChunk {
             path,
-            offset: i as f64 * 600.,
+            offset: i as f64 * f64::from(seconds),
             temporary: true,
         })
-        .collect())
+        .collect();
+    cleanup.0 = None; // Ownership transfers to AudioChunk::drop.
+    Ok(chunks)
+}
+
+#[cfg(all(test, unix))]
+mod cancellation_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn cancelled_chunking_removes_private_audio_while_ffmpeg_is_still_running() {
+        let fixture = tempfile::tempdir().unwrap();
+        let marker = fixture.path().join("directory-marker");
+        let executable = fixture.path().join("blocked-ffmpeg");
+        // Isolated stand-in writes one private chunk, then remains inside the real command await.
+        std::fs::write(&executable, format!("#!/bin/sh\nfor arg in \"$@\"; do out=\"$arg\"; done\ndir=$(/usr/bin/dirname \"$out\")\nprintf fixture > \"$dir/chunk-00000.wav\"\nprintf '%s' \"$dir\" > '{}'\nexec /bin/sleep 3600\n",marker.display())).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let job = tokio::spawn(async move {
+            split_audio_command(
+                Path::new("synthetic-input.wav"),
+                300,
+                executable.as_os_str(),
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await
+            }
+        })
+        .await
+        .unwrap();
+        let private_directory = PathBuf::from(std::fs::read_to_string(&marker).unwrap());
+        assert!(private_directory.join("chunk-00000.wav").is_file());
+        job.abort();
+        assert!(matches!(job.await, Err(error) if error.is_cancelled()));
+        let cleaned = !private_directory.exists();
+        if !cleaned {
+            let _ = std::fs::remove_dir_all(&private_directory);
+        }
+        assert!(
+            cleaned,
+            "cancelled ffmpeg must not leave private audio behind"
+        );
+    }
 }
 
 pub fn demo_analysis(transcript: &Value, rubric: &Value) -> Value {

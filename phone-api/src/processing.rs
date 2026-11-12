@@ -58,7 +58,15 @@ fn safe_error(error: Option<&str>) -> Value {
             | "runner_tools_not_isolated"
             | "runner_cleanup_failed"
             | "attempts_exhausted"
-            | "no_recording"),
+            | "no_recording"
+            | "asr_runner_auth_missing"
+            | "asr_runner_auth_failed"
+            | "asr_runner_url_mismatch"
+            | "unsupported_asr_model"
+            | "asr_invalid_request"
+            | "asr_audio_too_large"
+            | "invalid_transcript_response"
+            | "asr_response_too_large"),
         ) => code,
         Some(_) => "processing_failed",
     };
@@ -249,7 +257,8 @@ pub fn providers(
             }
             Some(config) => {
                 let allowed = if kind == "asr" {
-                    ["openai", "http"].contains(&config["provider"].as_str().unwrap_or(""))
+                    ["opencode", "openai", "http"]
+                        .contains(&config["provider"].as_str().unwrap_or(""))
                 } else {
                     ["opencode", "openai", "http"]
                         .contains(&config["provider"].as_str().unwrap_or(""))
@@ -259,7 +268,14 @@ pub fn providers(
                         .as_str()
                         .is_some_and(|v| !v.trim().is_empty())
                 });
-                if allowed && complete && phone_worker::models::normalized_base(config).is_ok() {
+                let valid_asr_connector = kind != "asr"
+                    || config["provider"] != "opencode"
+                    || phone_worker::asr_connector::validate_config(config).is_ok();
+                if allowed
+                    && complete
+                    && valid_asr_connector
+                    && phone_worker::models::normalized_base(config).is_ok()
+                {
                     None
                 } else {
                     Some("invalid_configuration")

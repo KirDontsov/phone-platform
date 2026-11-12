@@ -7,3 +7,4 @@ pub use providers::{
     amocrm_search, oauth_authorize_url, oauth_exchange, oauth_refresh, resolve_telphin_config,
     test_connection, ProviderError,
 };
+pub mod asr_connector;

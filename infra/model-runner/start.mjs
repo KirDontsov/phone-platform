@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import { createGateway } from './gateway.mjs';
 
 const password = process.env.OPENCODE_SERVER_PASSWORD;
 if (!password || password.length < 24) {
@@ -8,6 +9,7 @@ if (!password || password.length < 24) {
 }
 const configPath = '/etc/opencode/opencode.json';
 const config = fs.readFileSync(configPath, 'utf8');
+const gateway = createGateway({ password, config: JSON.parse(config) });
 for (const path of ['/tmp/runner/home', '/tmp/runner/data', '/tmp/runner/cache', '/tmp/runner/config']) {
   fs.mkdirSync(path, { recursive: true, mode: 0o700 });
 }
@@ -31,9 +33,19 @@ const env = {
 for (const [key, value] of Object.entries(process.env)) {
   if (/^[A-Z][A-Z0-9_]*(API_KEY|API_TOKEN)$/.test(key) && typeof value === 'string') env[key] = value;
 }
-const child = spawn('/usr/local/bin/opencode', ['serve', '--hostname', '0.0.0.0', '--port', '4096'], {
-  cwd: '/work', env, stdio: ['ignore', 'inherit', 'inherit'], shell: false
+const child = spawn('/usr/local/bin/opencode', ['serve', '--hostname', '127.0.0.1', '--port', '4097'], {
+  cwd: '/work', env, stdio: ['ignore', 'ignore', 'ignore'], shell: false
 });
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
-child.on('error', () => { process.stderr.write('model_runner_start_failed\n'); process.exit(1); });
-child.on('exit', (code, signal) => { process.exit(code ?? (signal ? 1 : 0)); });
+let stopping = false;
+async function stop(code = 0, signal = 'SIGTERM') {
+  if (stopping) return; stopping = true; process.exitCode = code;
+  const deadline = setTimeout(() => { child.kill('SIGKILL'); process.exit(code || 1); }, 5000); deadline.unref();
+  child.kill(signal); await gateway.close();
+  if (child.exitCode !== null || child.signalCode !== null) process.exit(code);
+  child.once('exit', () => process.exit(code));
+}
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { void stop(0, signal); });
+child.on('error', () => { process.stderr.write('model_runner_start_failed\n'); void stop(1); });
+child.on('exit', (code, signal) => { if (!stopping) { if (code || signal) process.stderr.write('model_runner_native_stopped\n'); void stop(code ?? 1); } });
+gateway.server.once('error', () => { process.stderr.write('model_runner_gateway_failed\n'); void stop(1); });
+gateway.server.listen(4096, '0.0.0.0');

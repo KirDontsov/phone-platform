@@ -199,6 +199,20 @@ pub fn save_connection_in_db(
         } else {
             json!({})
         };
+        if kind == "asr" {
+            let next_provider = config.get("provider").unwrap_or(&merged["provider"]);
+            let next_url = config.get("base_url").unwrap_or(&merged["base_url"]);
+            let normalized =
+                |v: &Value| phone_worker::models::normalized_base(&json!({"base_url":v})).ok();
+            let destination_changed = next_provider != &merged["provider"]
+                || normalized(next_url) != normalized(&merged["base_url"]);
+            let fresh_key = config["api_key"]
+                .as_str()
+                .is_some_and(|s| !s.trim().is_empty() && s != "<configured>");
+            if next_provider != "demo" && destination_changed && !fresh_key {
+                return Err(ApiError::bad("При смене провайдера или адреса расшифровки введи новый API-ключ. Старый ключ не переносится"));
+            }
+        }
         for (k, v) in config.as_object().unwrap() {
             let secret = [
                 "api_key",
@@ -234,6 +248,25 @@ pub fn save_connection_in_db(
         }
         if ["asr", "analysis"].contains(&kind.as_str()) && merged["provider"] == "demo" && !demo {
             return Err(ApiError::bad("Demo provider доступен только в DEMO_MODE"));
+        }
+        if kind == "asr" && merged["provider"] == "opencode" {
+            phone_worker::asr_connector::validate_config(&merged).map_err(|e| {
+                let (code, message) = match e.code.as_str() {
+                    "unsupported_asr_model" => (
+                        "unsupported_asr_model",
+                        "Выбери Parakeet Ultra или Nemotron 3.5 Transcribe",
+                    ),
+                    "asr_runner_url_mismatch" => (
+                        "asr_runner_url_mismatch",
+                        "Адрес коннектора должен совпадать с настройкой сервера",
+                    ),
+                    _ => (
+                        "invalid_asr_configuration",
+                        "Проверь адрес коннектора, модель и API-ключ OpenRouter",
+                    ),
+                };
+                ApiError::new(422, code, message)
+            })?;
         }
         if ["amocrm", "sheets"].contains(&kind.as_str()) {
             let redirect = format!("{public_url}/api/integrations/{kind}/callback");

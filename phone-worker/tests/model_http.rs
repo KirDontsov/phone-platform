@@ -53,7 +53,7 @@ async fn scripted_server(
                 assert!(n > 0);
                 bytes.extend_from_slice(&buffer[..n]);
             }
-            let body = if length > 0 {
+            let mut body = if length > 0 {
                 serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap_or_else(
                     |_| {
                         json!(String::from_utf8_lossy(
@@ -64,6 +64,9 @@ async fn scripted_server(
             } else {
                 Value::Null
             };
+            if actual_path.starts_with("/asr/") {
+                body["_captured_headers"] = json!(headers);
+            }
             out.lock().unwrap().push((actual_path, body));
             let payload = serde_json::to_vec(&response).unwrap();
             let header=format!("HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",payload.len());
@@ -198,4 +201,182 @@ async fn asr_upload_uses_multipart_versioned_endpoint_and_preserves_unknown_role
     assert!(multipart.contains("test-asr"));
     assert!(multipart.contains("verbose_json"));
     std::env::remove_var("PROVIDER_ALLOWED_HOSTS");
+}
+
+struct AsrEnvironment(Vec<(&'static str, Option<String>)>);
+impl AsrEnvironment {
+    fn new(url: &str) -> Self {
+        let values = [
+            ("PROVIDER_ALLOWED_HOSTS", "127.0.0.1"),
+            ("MODEL_RUNNER_URL", url),
+            (
+                "MODEL_RUNNER_PASSWORD",
+                "synthetic-runner-password-at-least-24",
+            ),
+        ];
+        let old = values
+            .iter()
+            .map(|(key, _)| (*key, std::env::var(key).ok()))
+            .collect();
+        for (key, value) in values {
+            std::env::set_var(key, value);
+        }
+        Self(old)
+    }
+}
+impl Drop for AsrEnvironment {
+    fn drop(&mut self) {
+        for (key, value) in &self.0 {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn opencode_asr_uses_exact_models_tenant_key_and_real_stt_protocol() {
+    use base64::Engine;
+    let _guard = ENV_LOCK.lock().unwrap();
+    for (model, tenant_key) in [
+        ("moondream/parakeet-ultra", "synthetic-tenant-a-key"),
+        ("nvidia/nemotron-3.5-transcribe", "synthetic-tenant-b-key"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synthetic.wav");
+        let audio = b"RIFF0000WAVE-not-real-audio";
+        std::fs::write(&path, audio).unwrap();
+        let (url, requests, server) = scripted_server(vec![("POST", "/asr/transcriptions", 200,
+            json!({"text":"Synthetic transcript","language":"ru","segments":[{"start":0.,"end":1.,"speaker":0,"text":"Synthetic one"},{"start":1.,"end":2.,"speaker":1,"text":"Synthetic two"}],"usage":{"cost":0.012,"seconds":3}}))]).await;
+        let _env = AsrEnvironment::new(&url);
+        let transcript = models::transcribe(
+            &json!({"provider":"opencode","base_url":url,"api_key":tenant_key,"model":model}),
+            &path,
+            3.,
+            false,
+            &json!({}),
+        )
+        .await
+        .unwrap();
+        server.await.unwrap();
+        assert_eq!(transcript["segments"][0]["speaker"], "0");
+        assert_eq!(transcript["segments"][1]["speaker"], "1");
+        assert_eq!(transcript["segments"][0]["role"], "unknown");
+        assert_eq!(transcript["role_confidence"], "uncertain");
+        assert_eq!(transcript["model"], model);
+        assert_eq!(transcript["usage"]["cost"], 0.012);
+        let rows = requests.lock().unwrap();
+        assert_eq!(rows[0].1["model"], model);
+        assert_eq!(rows[0].1["response_format"], "verbose_json");
+        assert_eq!(rows[0].1["input_audio"]["format"], "wav");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(rows[0].1["input_audio"]["data"].as_str().unwrap())
+                .unwrap(),
+            audio
+        );
+        let headers = rows[0].1["_captured_headers"]
+            .as_str()
+            .unwrap()
+            .to_lowercase();
+        assert!(headers.contains(&format!("x-openrouter-api-key: {tenant_key}")));
+        let basic = base64::engine::general_purpose::STANDARD
+            .encode("opencode:synthetic-runner-password-at-least-24");
+        assert!(headers.contains(&format!("authorization: basic {basic}").to_lowercase()));
+        assert!(!rows[0]
+            .1
+            .to_string()
+            .replace(&rows[0].1["_captured_headers"].to_string(), "")
+            .contains(tenant_key));
+    }
+}
+
+#[tokio::test]
+async fn opencode_asr_rejects_url_and_model_before_transport_or_audio_reads() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let _env = AsrEnvironment::new("http://127.0.0.1:9/");
+    let absent = std::path::Path::new("/nonexistent-synthetic-audio");
+    let mut config = json!({"provider":"opencode","base_url":"http://127.0.0.1:8/","api_key":"synthetic-key","model":"moondream/parakeet-ultra"});
+    assert_eq!(
+        models::transcribe(&config, absent, 3., false, &json!({}))
+            .await
+            .unwrap_err()
+            .code,
+        "asr_runner_url_mismatch"
+    );
+    config["base_url"] = json!("http://127.0.0.1:9/");
+    config["model"] = json!("unapproved/provider-model");
+    assert_eq!(
+        models::transcribe(&config, absent, 3., false, &json!({}))
+            .await
+            .unwrap_err()
+            .code,
+        "unsupported_asr_model"
+    );
+}
+
+#[tokio::test]
+async fn opencode_asr_connection_probe_and_failures_preserve_safe_codes_without_chat_or_paid_retry()
+{
+    let _guard = ENV_LOCK.lock().unwrap();
+    let (url, requests, server) =
+        scripted_server(vec![("POST", "/asr/test", 200, json!({"ok":true}))]).await;
+    let _env = AsrEnvironment::new(&url);
+    let config = json!({"provider":"opencode","base_url":url,"model":"moondream/parakeet-ultra","api_key":"synthetic-tenant-key"});
+    assert_eq!(
+        phone_worker::test_connection("asr", &config).await.unwrap()["ok"],
+        true
+    );
+    server.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert!(requests.lock().unwrap()[0].1.get("input_audio").is_none());
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("synthetic.wav");
+    std::fs::write(&path, b"RIFF0000WAVEfixture").unwrap();
+    for (status, remote_code, local_code, retryable) in [
+        (401, "runner_auth_required", "asr_runner_auth_failed", false),
+        (
+            401,
+            "provider_unauthorized",
+            "provider_reauthorization_required",
+            false,
+        ),
+        (
+            422,
+            "provider_request_failed",
+            "provider_request_rejected",
+            false,
+        ),
+        (429, "asr_busy", "provider_rate_limited", true),
+        (
+            502,
+            "invalid_transcript_response",
+            "invalid_transcript_response",
+            false,
+        ),
+    ] {
+        let (url, requests, server) = scripted_server(vec![(
+            "POST",
+            "/asr/transcriptions",
+            status,
+            json!({"error":{"code":remote_code,"message":"SYNTHETIC_SECRET_MUST_NOT_ESCAPE"}}),
+        )])
+        .await;
+        let _env = AsrEnvironment::new(&url);
+        let mut config = config.clone();
+        config["base_url"] = json!(url);
+        let error = models::transcribe(&config, &path, 3., false, &json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, local_code);
+        assert_eq!(error.retryable, retryable);
+        assert!(!format!("{error:?}").contains("SYNTHETIC_SECRET"));
+        server.await.unwrap();
+        assert_eq!(
+            requests.lock().unwrap().len(),
+            1,
+            "no second format/provider fallback request"
+        );
+    }
 }

@@ -150,3 +150,11 @@ Owning phase12; local/live verification будетотмечена отдель�
 - **CRM-01/SHEET-01:** явная связь со сделкой amoCRM либо выбранная доступная Google Таблица/лист, настройка соответствия полей колонкам; дальнейшее распределение в другие таблицы на стороне Google. Одна выбранная таблица/лист на компанию, без произвольной перезаписи ячеек сделок. Экспорт checklist сохраняет реальные verdict/null, актуальный анализ соответствует последнему тексту; попытки доставки сохраняют pinned result.
 
 Реализация/локальная проверка этой детализации фиксируется фазой13; внешние account/quality gates выше не закрываются автоматически.
+
+## Уточнение: Docker tunnel и OpenCode ASR — фаза14
+
+- **PLAT-01/AI-01:** удалённый сайт обращается к локальному DockerOpenCode через отдельныйSSHrelay; start-analyzer запускаетсвойruntimeизкоробкипослеодноразовогоpairing. НетpublicHTTPOpenCodeиhostDocker socket. Dedicatedproject/key/knownhosts/sharedpassword, reconnect инастоящаясквознаядиагностика.
+- **ASR-01/02:** exact moondream/parakeet-ultra иnvidia/nemotron-3.5-transcribe вnativeconfigcatalogиUI; фактическийSTTendpointчерезявныйDockeradapter, неfakechatmodel. TenantOpenRouterkey изencryptedconfig, transportpassword отдельно итолькодоверенномуoperatorURL; providerchangeнепереноситстарыйключ.
+- **OPS-01:** симптомыoffline/pairing/auth/protocolотделеныотready; largeaudiochunksbounded, отменённыеtemporaryaudio удаляются, ролиspeakerнеугадываются. SubscriptionCodexнеявляетсяOpenRouterkey.
+
+Фактическиеevidenceв14-VERIFICATION/UAT. Local+realisolatedSSHтесты отдельноотживогоremotehost/аккаунта/качества. Externalgatespending.

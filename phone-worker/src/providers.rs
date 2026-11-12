@@ -614,6 +614,9 @@ pub async fn test_connection(kind: &str, config: &Value) -> Result<Value> {
         }
         "asr" | "analysis" => {
             let provider = required(config, "provider")?;
+            if kind == "asr" && provider == "opencode" {
+                return crate::asr_connector::test_connection(config).await;
+            }
             if provider == "demo" {
                 if !matches!(std::env::var("DEMO_MODE").as_deref(), Ok("true" | "1")) {
                     return Err(ProviderError::permanent("demo_provider_not_allowed"));

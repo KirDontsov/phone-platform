@@ -44,5 +44,49 @@
   "instructions": [],
   "lsp": false,
   "formatter": false,
-  "compaction": { "auto": false, "prune": false }
+  "compaction": {
+    "auto": false,
+    "prune": false
+  },
+  "provider": {
+    "openrouter": {
+      "name": "OpenRouter transcription catalog",
+      "npm": "@openrouter/ai-sdk-provider",
+      "options": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "models": {
+        "moondream/parakeet-ultra": {
+          "name": "Moondream Parakeet Ultra",
+          "attachment": true,
+          "reasoning": false,
+          "temperature": false,
+          "tool_call": false,
+          "modalities": {
+            "input": [
+              "audio"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "nvidia/nemotron-3.5-transcribe": {
+          "name": "NVIDIA Nemotron 3.5 Transcribe",
+          "attachment": true,
+          "reasoning": false,
+          "temperature": false,
+          "tool_call": false,
+          "modalities": {
+            "input": [
+              "audio"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        }
+      }
+    }
+  }
 }

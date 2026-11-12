@@ -142,3 +142,11 @@ Research: officialbootstrap +anonymousloginHTML; behindauthmarkup/livepermission
 **Requirements:** CALL-01/03, TAG-01, ASR-01, AI-02, FLT-03/04, DASH-02, OPS-01, CRM-01, SHEET-01.
 **Plan:** 13-01 processing/relative callbacks, Dashboard/shared filters/sidebar, checklist/Sheets workflow.
 Research → независимый PLAN-CHECK PASS0/3 → execute → independent implementation review/fixes → verifier → automated UAT. Локальная реализация не закрывает живое ASR/модельное качество/CRM/Google и финальную пользовательскую приёмку. Все результаты: phases/13-call-workspace-acceptance.
+
+### Phase 14: Local Analyzer / Docker Tunnel / OpenCode ASR
+
+**Goal:** удалённый siteworker→DockerSSHrelay→localOpenCodeconnector, one-commandstartup идве выбранныеASRмодели.
+**Depends on:** Phases3,5,6,13. Phase12остаётсяpaused.
+**Requirements:** ASR-01/02,AI-01,PLAT-01,OPS-01.
+**Plan:**14-01: hardenedconnector+exactcatalog; portablelocalstartup/remoterelay; worker/APItenantSTT; settings/UAT.
+Research→independentPLAN-CHECK PASS0/3→execute→independentreview/fixes→verifier→automatedUAT. Implementation+localchecksесть; SSHrealhost/pairing/OpenRouterqualityиhumanUATpending. GSDplanstructurevalid4tasks; подробностиphases/14-local-analyzer-opencode.

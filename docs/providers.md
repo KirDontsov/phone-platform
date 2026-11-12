@@ -97,3 +97,13 @@ PostgreSQL — источник истины очереди. Claim/heartbeat/fen
 Вход анализа содержит UUID allowlists и определения `tag_definitions` / `status_definitions` с названиями, чтобы модель могла сопоставить смысл меток с разговором. Явно отключённый ASR/analysis не заменяется учебным провайдером даже в DEMO_MODE.
 
 После неоднозначной внешней записи delivery сохраняет `requires_reconciliation` через ошибки чтения/refresh и повторные попытки. Возврат к обычному POST/append без подтверждения результата запрещён. Локальные ошибки настройки сделки/колонок проверяются до состояния attempting; успешная подтверждённая доставка снимает этот флаг.
+
+## OpenCode ASR через локальный Docker connector
+
+ASR connection: `{provider:"opencode",base_url:"http://model-runner:4096",model:"moondream/parakeet-ultra"|"nvidia/nemotron-3.5-transcribe",api_key:"TENANT_OPENROUTER_KEY"}`. В отличие от legacy analysis.opencode, поле api_key здесь означает ключ OpenRouter компании, а не Basic password. Он зашифрован общим механизмом credentials; ответы/логи его не содержат. При смене ASR provider/base_url пустой ключ запрещён, чтобы не отправить старый секрет новому поставщику.
+
+Worker берёт transport password из runtime MODEL_RUNNER_PASSWORD и допускает destination только равный operator-owned MODEL_RUNNER_URL (default http://model-runner:4096). ASR отправляется POST/asr/transcriptions с отдельным X-OpenRouter-Api-Key и typed JSON input_audio; gateway фиксирует upstream openrouter.ai/api/v1/audio/transcriptions, не использует chat-completions для STT, не подставляет другие модели и не делает скрытого повторного платного запроса при несовместимом формате. Native OpenCode1.18.10 остаётся для текстового анализа, deny-all/MCP0/session cleanup сохранены. /asr/test проверяет ключ через провайдера без audio inference.
+
+Общие поля transcript: provider=opencode, upstream_provider=openrouter, model=exact slug, segments с неизвестными ролями и usage с фактическими значениями/null. Для длинных записей части не более300 секунд и24MiB; speaker labels разных частей разделены, пока идентичность не подтверждена. Доступные моделью timestamps не гарантируются для любого ответа; текст без segments остаётся coarse whole-recording transcript. Недостаточные роли/доказательства не дают уверенной оценки.
+
+Удалённый сайт и локальный компьютер: [запуск analyzer и туннеля](local-analyzer.md). БД, медиа и очередь остаются на сервере; ноутбуку нужны Docker и доступ к моделям. Реальная настройка удалённого хоста и качество ASR проверяются отдельно.
