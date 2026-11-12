@@ -1,4 +1,5 @@
 pub mod assistant;
+pub mod telphin_identity;
 pub mod auth;
 pub mod calls;
 pub mod operations;

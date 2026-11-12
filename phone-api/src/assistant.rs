@@ -245,21 +245,33 @@ async fn credentials(
     }
     let config = body["config"].clone();
     store::strict_keys(&config, &["host", "app_id", "app_secret", "client_id"])?;
-    for key in ["app_id", "app_secret", "client_id"] {
+    for key in ["app_id", "app_secret"] {
         let v = crate::str_field(&config, key)?;
         if v.len() > 4096 || v.chars().any(char::is_control) {
             return Err(ApiError::bad("Проверьте формат доступов"));
         }
     }
-    let client = config["client_id"].as_str().unwrap();
-    if client.len() > 40 || !client.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(ApiError::bad("Нужен числовой ID клиента АТС"));
+    let resolve = crate::telphin_identity::needs_resolution(&config)?;
+    if !resolve {
+        let client = config["client_id"].as_str().unwrap();
+        if client.len() > 40 || !client.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(ApiError::bad("Нужен числовой ID клиента АТС"));
+        }
     }
     if !["apiproxy.telphin.ru", "altapi.telphin.ru"]
         .contains(&config["host"].as_str().unwrap_or("apiproxy.telphin.ru"))
     {
         return Err(ApiError::bad("Неверный сервер Телфина"));
     }
+    let context = ctx.clone();
+    let conversation = *id;
+    state
+        .db(move |c| {
+            store::document(c, &context, conversation, store::CONVERSATION)?;
+            Ok(())
+        })
+        .await?;
+    let config = crate::telphin_identity::complete(&req, config).await?;
     let mut label = body["label"]
         .as_str()
         .unwrap_or("Доступ Телфин")
@@ -281,7 +293,7 @@ async fn credentials(
     let encrypted = contracts::seal(&config, &state.key).map_err(|_| ApiError::internal())?;
     let conversation = *id;
     Ok(ok(state.db(move|c|c.transaction::<_,ApiError,_>(|c|{
-  store::conversation(c,&ctx,conversation)?;let count=persistence::list_children(c,ctx.organization_id,conversation,Some(store::CREDENTIAL))?.iter().filter(|d|store::valid_deadline(&d.data)&&d.data["config_encrypted"].is_string()).count();if count>=8{return Err(ApiError::new(429,"assistant_credential_limit","Удалите лишние доступы перед добавлением новых"));}
+  store::conversation(c,&ctx,conversation)?;store::live_context(c,ctx.organization_id,ctx.user_id,&ctx.token_hash,true)?;let count=persistence::list_children(c,ctx.organization_id,conversation,Some(store::CREDENTIAL))?.iter().filter(|d|store::valid_deadline(&d.data)&&d.data["config_encrypted"].is_string()).count();if count>=8{return Err(ApiError::new(429,"assistant_credential_limit","Удалите лишние доступы перед добавлением новых"));}
   let id=Uuid::new_v4();let d=persistence::save_document(c,ctx.organization_id,id,store::CREDENTIAL,Some(conversation),json!({"user_id":ctx.user_id,"kind":"telphin","label":label,"config_encrypted":encrypted,"expires_at":Utc::now()+Duration::hours(24)}),None)?;
   settings::audit(c,&ctx,"assistant.credential_added",Some(id),json!({"kind":"telphin"}))?;Ok(store::credential_json(&d))
  })).await?))

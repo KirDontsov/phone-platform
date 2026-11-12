@@ -172,12 +172,24 @@ pub struct Telphin {
 impl Telphin {
     pub async fn connect(config: &Value) -> Result<Self> {
         let host = required(config, "host").unwrap_or("apiproxy.telphin.ru");
+        if !["apiproxy.telphin.ru", "altapi.telphin.ru"].contains(&host) {
+            return Err(ProviderError::permanent("provider_url_not_allowed"));
+        }
         let host = endpoint(&format!("https://{host}"), "telphin")?;
+        Self::connect_with(config, http_client()?, host).await
+    }
+    // The production entry point above always supplies an allowlisted HTTPS host.
+    // Tests exercise the same grant/scope logic with a private loopback fixture.
+    async fn connect_with(config: &Value, client: Client, host: Url) -> Result<Self> {
         required(config, "app_id")?;
         required(config, "app_secret")?;
-        numeric_id(config.get("client_id"))?;
+        let expected_client_id = match config.get("client_id") {
+            None => None,
+            Some(Value::String(value)) if value.trim().is_empty() => None,
+            Some(value) => Some(canonical_client_id(Some(value))?),
+        };
         let mut telphin = Self {
-            client: http_client()?,
+            client,
             config: config.clone(),
             host,
             token: String::new(),
@@ -190,9 +202,12 @@ impl Telphin {
         {
             return Err(ProviderError::permanent("telphin_client_scope_required"));
         }
-        if numeric_id(user.get("client_id"))? != numeric_id(config.get("client_id"))? {
+        let client_id = canonical_client_id(user.get("client_id"))?;
+        if expected_client_id.is_some_and(|expected| expected != client_id) {
             return Err(ProviderError::permanent("telphin_client_mismatch"));
         }
+        telphin.config["client_id"] = json!(client_id);
+        telphin.config["host"] = json!(required(config, "host").unwrap_or("apiproxy.telphin.ru"));
         Ok(telphin)
     }
     async fn grant(&mut self) -> Result<()> {
@@ -337,6 +352,17 @@ impl Telphin {
         }
         Ok((bytes, mime))
     }
+}
+/// Validate API credentials against their authenticated user and return the canonical config.
+/// App ID is the OAuth client_id; the PBX client ID is a distinct user resource field.
+pub async fn resolve_telphin_config(config: &Value) -> Result<Value> {
+    Ok(Telphin::connect(config).await?.config)
+}
+fn canonical_client_id(value: Option<&Value>) -> Result<String> {
+    numeric_id(value)?
+        .parse::<u64>()
+        .map(|id| id.to_string())
+        .map_err(|_| ProviderError::permanent("invalid_client_id"))
 }
 pub fn numeric_id(value: Option<&Value>) -> Result<String> {
     let raw = value
@@ -626,4 +652,208 @@ pub async fn test_connection(kind: &str, config: &Value) -> Result<Value> {
         _ => return Err(ProviderError::permanent("unsupported_provider")),
     }
     Ok(json!({"ok":true,"state":"configured","message":"Подключение проверено"}))
+}
+
+#[cfg(test)]
+mod client_id_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    struct Fixture {
+        host: Url,
+        requests: Arc<Mutex<Vec<(String, String, String)>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+    async fn fixture(user: Value) -> Fixture {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        let task = tokio::spawn(async move {
+            for reply in [
+                json!({"access_token":"synthetic-token","token_type":"Bearer","expires_in":3600}),
+                user,
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let header_end = loop {
+                    let mut part = [0; 1024];
+                    let n = stream.read(&mut part).await.unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&part[..n]);
+                    if let Some(end) = bytes.windows(4).position(|p| p == b"\r\n\r\n") {
+                        break end + 4;
+                    }
+                    assert!(bytes.len() < 65536);
+                };
+                let headers = String::from_utf8(bytes[..header_end].to_vec()).unwrap();
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':')
+                            .filter(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                            .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                while bytes.len() < header_end + length {
+                    let mut part = [0; 1024];
+                    let n = stream.read(&mut part).await.unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&part[..n]);
+                }
+                let body =
+                    String::from_utf8(bytes[header_end..header_end + length].to_vec()).unwrap();
+                captured.lock().unwrap().push((
+                    headers.lines().next().unwrap().to_owned(),
+                    headers,
+                    body,
+                ));
+                let data = serde_json::to_vec(&reply).unwrap();
+                let header=format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",data.len());
+                stream.write_all(header.as_bytes()).await.unwrap();
+                stream.write_all(&data).await.unwrap();
+            }
+        });
+        Fixture {
+            host,
+            requests,
+            task,
+        }
+    }
+    fn config() -> Value {
+        json!({"app_id":"synthetic-app-id","app_secret":"synthetic+secret&=value","host":"apiproxy.telphin.ru"})
+    }
+    fn user(id: Value) -> Value {
+        json!({"client_id":id,"extension_id":null,"extension_group_id":null})
+    }
+    async fn connect(config: &Value, f: &Fixture) -> Result<Value> {
+        Ok(
+            Telphin::connect_with(config, http_client()?, f.host.clone())
+                .await?
+                .config,
+        )
+    }
+    fn assert_grant_and_user(f: &Fixture) {
+        let captured = f.requests.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        assert_eq!(captured[0].0, "POST /oauth/token HTTP/1.1");
+        assert!(captured[0]
+            .1
+            .to_lowercase()
+            .contains("content-type: application/x-www-form-urlencoded"));
+        let fields = url::form_urlencoded::parse(captured[0].2.as_bytes())
+            .into_owned()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(fields.get("grant_type").unwrap(), "client_credentials");
+        assert_eq!(fields.get("client_id").unwrap(), "synthetic-app-id");
+        assert_eq!(
+            fields.get("client_secret").unwrap(),
+            "synthetic+secret&=value"
+        );
+        assert_eq!(captured[1].0, "GET /api/ver1.0/user/ HTTP/1.1");
+        assert!(captured[1]
+            .1
+            .to_lowercase()
+            .contains("authorization: bearer synthetic-token"));
+        assert!(captured[1].2.is_empty());
+    }
+    #[tokio::test]
+    async fn resolve_telphin_missing_or_blank_client_id_from_authenticated_user() {
+        for blank in [None, Some(json!("")), Some(json!("   "))] {
+            let mut input = config();
+            if let Some(value) = blank {
+                input["client_id"] = value;
+            }
+            let f = fixture(user(json!(42))).await;
+            let resolved = connect(&input, &f).await.unwrap();
+            assert_eq!(resolved["client_id"], "42");
+            assert_eq!(resolved["app_id"], input["app_id"]);
+            assert_eq!(resolved["app_secret"], input["app_secret"]);
+            assert_ne!(input["client_id"], "42");
+            assert_grant_and_user(&f);
+        }
+    }
+    #[tokio::test]
+    async fn resolve_telphin_normalizes_numeric_client_id_and_checks_explicit_match() {
+        for id in [json!(42), json!("42"), json!("0042")] {
+            let mut input = config();
+            input["client_id"] = id;
+            let f = fixture(user(json!(42))).await;
+            assert_eq!(connect(&input, &f).await.unwrap()["client_id"], "42");
+            assert_grant_and_user(&f);
+        }
+        let mut input = config();
+        input["client_id"] = json!(43);
+        let f = fixture(user(json!(42))).await;
+        assert_eq!(
+            connect(&input, &f).await.unwrap_err().code,
+            "telphin_client_mismatch"
+        );
+        assert_grant_and_user(&f);
+    }
+    #[tokio::test]
+    async fn resolve_telphin_rejects_extension_and_group_scope() {
+        for field in ["extension_id", "extension_group_id"] {
+            let mut input = config();
+            input["client_id"] = json!(42);
+            let mut limited = user(json!(42));
+            limited[field] = json!(7);
+            let f = fixture(limited).await;
+            assert_eq!(
+                connect(&input, &f).await.unwrap_err().code,
+                "telphin_client_scope_required"
+            );
+            assert_grant_and_user(&f);
+        }
+    }
+    #[tokio::test]
+    async fn resolve_telphin_never_guesses_invalid_explicit_or_provider_client_id() {
+        for id in [
+            Value::Null,
+            json!(0),
+            json!(-1),
+            json!(true),
+            json!("invalid"),
+            json!(1.5),
+            json!({"id":42}),
+        ] {
+            let mut input = config();
+            input["client_id"] = id;
+            let f = fixture(user(json!(42))).await;
+            assert_eq!(
+                connect(&input, &f).await.unwrap_err().code,
+                "invalid_client_id"
+            );
+            assert!(f.requests.lock().unwrap().is_empty());
+        }
+        for id in [
+            Value::Null,
+            json!(0),
+            json!(false),
+            json!(""),
+            json!("unknown"),
+        ] {
+            let f = fixture(user(id)).await;
+            assert_eq!(
+                connect(&config(), &f).await.unwrap_err().code,
+                "invalid_client_id"
+            );
+            assert_grant_and_user(&f);
+        }
+    }
+    #[tokio::test]
+    async fn resolve_telphin_production_has_no_loopback_or_untrusted_host_override() {
+        let mut input = config();
+        input["host"] = json!("127.0.0.1");
+        assert_eq!(
+            resolve_telphin_config(&input).await.unwrap_err().code,
+            "provider_url_not_allowed"
+        );
+    }
 }

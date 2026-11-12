@@ -278,13 +278,55 @@ async fn save_connection(
 ) -> Result<HttpResponse, ApiError> {
     let ctx = auth::context(&state, &req, true, 2).await?;
     let kind = kind.into_inner();
-    let config = body["config"].clone();
+    let mut config = body["config"].clone();
+    let mut expected_version = None;
+    let resolving = kind == "telphin" && crate::telphin_identity::needs_resolution(&config)?;
+    if resolving {
+        let org = ctx.organization_id;
+        let key = state.key;
+        let previous = state
+            .db(move |c| {
+                Ok(persistence::get_document(
+                    c,
+                    org,
+                    connection_id(org, "telphin"),
+                )?)
+            })
+            .await?;
+        expected_version = previous.as_ref().map(|d| d.version);
+        let mut merged = previous
+            .as_ref()
+            .map(|d| config_value(d, &key))
+            .transpose()?
+            .unwrap_or(json!({}));
+        for (k, v) in config
+            .as_object()
+            .ok_or_else(|| ApiError::bad("Нужна конфигурация подключения"))?
+        {
+            if k == "app_secret"
+                && (v.is_null() || v.as_str() == Some("") || v.as_str() == Some("<configured>"))
+            {
+                continue;
+            }
+            merged[k] = v.clone();
+        }
+        merged.as_object_mut().unwrap().remove("client_id");
+        config = crate::telphin_identity::complete(&req, merged).await?;
+    }
     let key = state.key;
     let public_url = state.public_url.clone();
     let demo = state.demo;
     let password = std::env::var("MODEL_RUNNER_PASSWORD").ok();
     Ok(ok(state
-        .db(move |c| save_connection_in_db(c, &ctx, kind, config, key, public_url, demo, password))
+        .db(move |c| c.transaction::<_,ApiError,_>(|c| {
+            if resolving {
+                lock_settings_revision(c,ctx.organization_id)?;
+                let _=diesel::sql_query("SELECT s.user_id,s.organization_id,m.role,s.csrf_token,u.email,u.name,s.token_hash FROM sessions s JOIN memberships m ON m.user_id=s.user_id AND m.organization_id=s.organization_id JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.organization_id=$2 AND s.user_id=$3 AND s.expires_at>now() AND m.role='owner' FOR SHARE OF s,m").bind::<Text,_>(&ctx.token_hash).bind::<SqlUuid,_>(ctx.organization_id).bind::<SqlUuid,_>(ctx.user_id).get_result::<auth::Context>(c).optional()?.ok_or_else(ApiError::forbidden)?;
+                let current=persistence::get_document(c,ctx.organization_id,connection_id(ctx.organization_id,"telphin"))?;
+                if current.as_ref().map(|d|d.version)!=expected_version {return Err(ApiError::new(409,"connection_changed","Подключение изменилось. Обновите страницу и повторите сохранение"));}
+            }
+            save_connection_in_db(c,&ctx,kind,config,key,public_url,demo,password)
+        }))
         .await?))
 }
 async fn disconnect(

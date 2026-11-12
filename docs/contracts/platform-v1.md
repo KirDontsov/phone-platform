@@ -46,7 +46,7 @@ Analysis = `{id,state,model,provider,prompt_version,rubric_version,transcript_id
 - POST /connections/telphin/sync `{from?,to?,all_available?}` -> `{job_id}`
 - PATCH /organization `{name?,timezone?,callback_minutes?,working_hours?,retention_days?,callback_allow_inbound?,callback_min_duration?}` -> organization
 
-Telphin config `{host,client_id,app_id,app_secret}`. ASR `{provider:'openai'|'http'|'demo',model,base_url,api_key}`. Analysis `{provider:'opencode'|'openai'|'http'|'demo',model,base_url,api_key,budget_daily,timeout_seconds}`. Default demo providers only in explicit DEMO_MODE; production reports missing configuration and never fabricates transcript/analysis. Secrets redacted as `<configured>` in GET.
+Telphin input config `{host,client_id?,app_id,app_secret}`. Missing/blank client_id is resolved server-side via authenticated /user/ before saving; persisted config always contains a validated numeric client_id. Failed lookup stores no connection and emits a safe error. ASR `{provider:'openai'|'http'|'demo',model,base_url,api_key}`. Analysis `{provider:'opencode'|'openai'|'http'|'demo',model,base_url,api_key,budget_daily,timeout_seconds}`. Default demo providers only in explicit DEMO_MODE; production reports missing configuration and never fabricates transcript/analysis. Secrets redacted as `<configured>` in GET.
 amoCRM config `{account_domain,client_id,client_secret,redirect_uri}`; Sheets `{client_id,client_secret,redirect_uri,spreadsheet_id,sheet_name,column_mapping}`.
 
 ## Integrations and operations
