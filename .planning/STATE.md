@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_15_deploying
-stopped_at: Phase15 PLAN-CHECK PASS; GitHub master pushed, independent HTTPS certificate issued, native amd64 images building; planned own Phone migration and real analyzer pairing in progress
+status: phase_15_automated_verified_human_uat_pending
+stopped_at: Phase15 production15-5789727 healthy, data migration/cutover/public browser/real analyzer verified; independent verifier PASS, final owner UAT pending; phase12 paused
 last_updated: "2026-11-12"
 progress:
   total_phases: 15
-  implemented_phases: 13
-  locally_verified_phases: 13
+  implemented_phases: 14
+  locally_verified_phases: 14
   accepted_phases: 0
   completed_phases: 0
-  total_plans: 33
-  implemented_plans: 31
+  total_plans: 34
+  implemented_plans: 32
   completed_plans: 1
 ---
 
@@ -20,7 +20,15 @@ progress:
 
 ## Текущее состояние — фаза15
 
-Пользователь явно разрешил deployment на dks@81.16.141.170, phone.bondscan.ru и push существующей master в GitHub KirDontsov/phone-platform. Независимый PLAN-CHECK PASS0/3, GSD structure valid4tasks. Git history/README сохранены, origin подключён, HEAD2e894a4 уже отправлен. Сервер исследован по Lentaria без чтения Bondscan secrets/DB. DNS готов; отдельные own HTTPvhost/webroot и LEcertificate phone.bondscan.ru до2027-02-10 созданы. Native amd64 images собираются собственным HDD-backed ephemeralBuildKit без sharedprune. Реальная миграция только Phone DB/media/auth с сохранением encryptionkey и Codexgeneration, сменой трёх публичных demo passwords и отзывом сессий — в работе. Новый Phone restricted SSHpubkey разрешён, jumphostpinned; relaypairing ещё не объявленPASS. HTTPSpublication и productionUAT pending. Phase12paused/stash сохранены.
+Production https://phone.bondscan.ru опубликован на разрешённом dks@81.16.141.170; GitHub origin KirDontsov/phone-platform/master подключён, code5789727 отправлен без изменения истории. Собственный Compose рядом с Lentaria/Bondscan,7сервисовhealthy,5nativeamd64images15-5789727; sharedresources не очищались. Независимый PLAN-CHECK PASS0/3, execute completed; независимая implementation VERIFICATION PASS, automatedUAT PASS; humanUAT pending.
+
+Planned transfer только Phone:2org/6users/6memberships/759calls/614readyrecordings/10connections/27471docs/1247jobs baseline. SHA/digests совпали,614readyfiles проверены,5encryptedconfigs расшифрованы прежним encryptionkey, свои Codexauthvolume/confirmedgeneration сохранены. Три demo passwords заменены на случайные; новые доступы только0600 secrets/production-access.json, snapshots private data/backups/production-20261112. Websessions/grants/tempcredentials отозваны. Cutover finalized, старые localAPI/worker/assistant stopped, исходные данные и volumes сохранены.
+
+Собственные nginx/TLS/ACMEwebroot/renewalhook; LEcert до2027-02-10, dryrunrenewPASS. Настоящий remoteDocker→privateSSHrelay→этоткомпьютер→OpenCode1.18.10/catalog2ASRmodels PASS, anon/wrongpassword401, start-analyzer/doctorhealthy. Компьютер/Docker должны работать. Runtimeсекреты/учётные записи Bondscan не использовались; его hostSSHtarget явно передан пользователем.
+
+20migrationtests с отдельным настоящимPG PASS,8REDmutations подтверждены; Linuxstaging/modes/immutableSHA/flock и REDtar-p PASS. Non-rootDocker assertions relay/Codex0.167.2 PASS. PublicPython/Chrome1440/390 PASS:3старых пароля401,3новых входят Secure/HttpOnly/Lax,2компании/header409/foreigncall404,mediaRange206,Codexauthenticatedtrue,JS0/overflow0/configwrites0/modelrequests0. Исправлены реальные deploymentbugs: quotedtmpfs, PUBLICkey644 дляUID10001, сохранение gitpermissions приarchive/defensivecodechmod; releasebuild state/cache на собственном HDD.
+
+HumanUAT/реальная ASRmodelquality и внешниеCRM/Sheets не закрываются transport/browser smoke. OpenRouterключ компании ещё нужен; SMTP отсутствует (invite/reset не доставляются). Проверка владельцем: phases/15-production-deployment/15-UAT.md; эксплуатация docs/release-runbook.md. Phase12/stash ddddf25f4ef384b0a02359042efa4bee159a1f09 сохранены.
 
 ## История реализации — фаза14
 
