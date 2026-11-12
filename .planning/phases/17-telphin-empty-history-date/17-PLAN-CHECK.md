@@ -12,3 +12,7 @@
 - Независимый review/verifier, состояние старого owner/регистрации/Codex/tunnel, неизменность phase12 stash, GitHub HEAD и финальный user UAT предусмотрены. Live ASR, качество моделей и соседние приложения вне исправления.
 
 GSD-tools verify plan-structure: valid=true, errors/warnings=[]; две задачи с files/action/verify/done. Блокирующих замечаний нет.
+
+## Дополнение перед выпуском — PASS
+
+Автор обнаружил необходимое продолжение восстановления: fail(sync) сохраняет connection.state=error, успешный sync очищал только last_error, а scheduler выбирает configured. План дополнен переходом только error→configured в существующем успешном fenced final_write; disconnected/configured сохраняются. Это устраняет зависшее подключение после исправленного импорта, без нового endpoint/схемы/очереди. Независимо просмотрены failure/success/scheduler paths. Выпуск должен содержать обновлённый code revision, live проверка — состояние configured после завершения и возобновление периодического polling. Дополнение не требует пересмотра timestamp fix; блокеров нет.

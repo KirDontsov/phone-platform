@@ -744,6 +744,9 @@ impl Worker {
                 }
                 doc.data["last_sync_at"] = json!(end);
                 doc.data["last_error"] = Value::Null;
+                if doc.data["state"] == "error" {
+                    doc.data["state"] = json!("configured");
+                }
                 persistence::save_document(
                     conn,
                     org,
