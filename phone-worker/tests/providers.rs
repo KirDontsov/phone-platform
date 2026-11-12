@@ -228,6 +228,37 @@ fn sheets_mapping_keeps_tenant_key_in_a_and_rejects_unknown_or_duplicate_columns
 }
 
 #[test]
+fn sheets_exports_agreements_next_steps_and_explicit_criterion_verdicts() {
+    let config = json!({"column_mapping":{"call_id":"A","summary":"B","agreements":"C","next_steps":"D","criteria":"E"}});
+    let analysis = json!({"summary":"Synthetic summary","agreements":["Send invoice"],"next_steps":["Call tomorrow"],"criteria":[{"id":"greet","name":"Greeting","evaluation_mode":"checklist","fulfilled":false,"score":0,"status":"scored","reason":"Synthetic evidence"}]});
+    let values = phone_worker::integrations::sheets_columns(
+        &config,
+        &json!({"id":"synthetic-call"}),
+        Some(&analysis),
+        "",
+        "",
+    )
+    .unwrap();
+    assert_eq!(values[0], "Synthetic summary");
+    assert_eq!(values[1], analysis["agreements"].to_string());
+    assert_eq!(values[2], analysis["next_steps"].to_string());
+    let criteria: serde_json::Value = serde_json::from_str(values[3].as_str().unwrap()).unwrap();
+    assert_eq!(criteria[0]["fulfilled"], false);
+    assert_eq!(criteria[0]["name"], "Greeting");
+}
+
+#[test]
+fn demo_checklist_result_respects_mode_and_never_infers_a_scaled_verdict() {
+    let transcript = models::demo_transcript(&json!({"synthetic":true,"duration":60}));
+    let rubric = json!({"criteria":[{"id":"greet","name":"Greeting","weight":1,"required":true,"evaluation_mode":"checklist"}]});
+    let mut result = models::demo_analysis(&transcript, &rubric);
+    assert_eq!(result["criteria"][0]["fulfilled"], true);
+    assert_eq!(result["criteria"][0]["score"], 5);
+    domain::validate_analysis(&mut result, &transcript, &rubric, &[], &[]).unwrap();
+    assert_eq!(result["score"], 100.);
+}
+
+#[test]
 fn delivery_write_distinguishes_definite_rejection_from_ambiguous_commit() {
     use phone_worker::{integrations::delivery_write_error, ProviderError};
     let quota = delivery_write_error(ProviderError::retry("provider_rate_limited", 120));

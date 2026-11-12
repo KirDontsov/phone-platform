@@ -147,9 +147,9 @@ pub fn sheets_columns(
             "call_id" => Value::Null,
             "date" | "started_at" => call["started_at"].clone(),
             "result" | "provider_result" => call["provider_result"].clone(),
-            "summary" => analysis
-                .map(|a| a["summary"].clone())
-                .unwrap_or(Value::Null),
+            "summary" | "customer_intent" | "agreements" | "next_steps" | "criteria" => {
+                analysis.map(|a| a[field].clone()).unwrap_or(Value::Null)
+            }
             "call_link" => json!(format!(
                 "{}/calls/{}",
                 public_url.trim_end_matches('/'),

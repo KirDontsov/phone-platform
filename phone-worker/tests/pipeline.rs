@@ -9,6 +9,119 @@ use uuid::Uuid;
 static PG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[tokio::test]
+async fn export_uses_current_transcript_score_and_preserves_pinned_delivery_analysis() {
+    let _serial = PG_TEST_LOCK.lock().unwrap();
+    let Some((worker, _directory, org)) = review_worker(false) else {
+        return;
+    };
+    let call = Uuid::new_v4();
+    let old_transcript = Uuid::new_v4();
+    let new_transcript = Uuid::new_v4();
+    let old_analysis = Uuid::new_v4();
+    let new_analysis = Uuid::new_v4();
+    let mut conn = persistence::connection(&worker.pool).unwrap();
+    let data = json!({"score":99,"started_at":"2026-11-01T00:00:00Z"});
+    persistence::save_document(&mut conn, org, call, "call", None, data.clone(), None).unwrap();
+    persistence::save_document(
+        &mut conn,
+        org,
+        old_transcript,
+        "transcript",
+        Some(call),
+        json!({"state":"ready"}),
+        None,
+    )
+    .unwrap();
+    diesel::sql_query("UPDATE documents SET created_at=now()-interval '1 hour' WHERE organization_id=$1 AND id=$2").bind::<SqlUuid,_>(org).bind::<SqlUuid,_>(old_transcript).execute(&mut conn).unwrap();
+    persistence::save_document(
+        &mut conn,
+        org,
+        old_analysis,
+        "analysis",
+        Some(call),
+        json!({"transcript_id":old_transcript,"state":"ready","score":20,"summary":"Old result"}),
+        None,
+    )
+    .unwrap();
+    persistence::save_document(
+        &mut conn,
+        org,
+        new_transcript,
+        "transcript",
+        Some(call),
+        json!({"state":"ready"}),
+        None,
+    )
+    .unwrap();
+    assert!(
+        phone_worker::pipeline::select_export_analysis(&mut conn, org, call, None)
+            .unwrap()
+            .is_none(),
+        "new transcript cannot export obsolete summary"
+    );
+    let exported = phone_worker::pipeline::export_call_data(&data, None);
+    assert!(exported["score"].is_null());
+    persistence::save_document(&mut conn,org,new_analysis,"analysis",Some(call),json!({"transcript_id":new_transcript,"state":"ready","score":61,"summary":"Current result"}),None).unwrap();
+    let current = phone_worker::pipeline::select_export_analysis(&mut conn, org, call, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(current.id, new_analysis);
+    let exported = phone_worker::pipeline::export_call_data(&data, Some(&current.data));
+    assert_eq!(exported["score"], 61);
+    let columns = phone_worker::integrations::sheets_columns(
+        &json!({"column_mapping":{"call_id":"A","score":"B","summary":"C"}}),
+        &exported,
+        Some(&current.data),
+        "http://localhost",
+        "synthetic-marker",
+    )
+    .unwrap();
+    assert_eq!(
+        columns,
+        json!([61, "Current result"]).as_array().unwrap().clone()
+    );
+    let pinned = phone_worker::pipeline::select_export_analysis(
+        &mut conn,
+        org,
+        call,
+        Some(&json!({"state":"uncertain","analysis_id":old_analysis})),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(pinned.id, old_analysis);
+    assert_eq!(
+        phone_worker::pipeline::export_call_data(&data, Some(&pinned.data))["score"],
+        20
+    );
+    assert!(
+        phone_worker::pipeline::select_export_analysis(
+            &mut conn,
+            org,
+            call,
+            Some(&json!({"state":"uncertain","analysis_id":null}))
+        )
+        .unwrap()
+        .is_none(),
+        "a null pin must not adopt a result created after the outbound write"
+    );
+    assert_eq!(
+        phone_worker::pipeline::select_export_analysis(
+            &mut conn,
+            org,
+            call,
+            Some(&json!({"analysis_id":Uuid::new_v4()}))
+        )
+        .unwrap_err()
+        .code,
+        "pinned_analysis_missing"
+    );
+    diesel::sql_query("DELETE FROM organizations WHERE id=$1")
+        .bind::<SqlUuid, _>(org)
+        .execute(&mut conn)
+        .unwrap();
+}
+
+#[tokio::test]
 async fn demo_reprocess_preserves_manual_fields_versions_and_purge_removes_artifacts() {
     let _serial = PG_TEST_LOCK.lock().unwrap();
     let Ok(url) = std::env::var("TEST_DATABASE_URL") else {

@@ -12,8 +12,10 @@ enum Kind {
 fn field_kind(field: &str) -> Option<Kind> {
     Some(match field {
         "direction" | "provider_result" | "employee" | "status_id" | "contact_kind" | "stage"
-        | "callback_state" | "recording_state" => Kind::Text,
-        "score" | "duration" => Kind::Number,
+        | "callback_state" | "recording_state" | "analysis_state" | "transcript_state" => {
+            Kind::Text
+        }
+        "score" | "duration" | "callback_age_minutes" | "callback_attempts" => Kind::Number,
         "started_at" => Kind::Date,
         "has_recording" | "human_connected" => Kind::Boolean,
         "tag_ids" => Kind::StringArray,
@@ -210,6 +212,30 @@ mod tests {
         }
         assert!(validate_filter(&f).is_err());
         assert!(validate_filter(&json!({"op":"and","rules":(0..64).map(|_|json!({"op":"and","rules":[]})).collect::<Vec<_>>()})).is_err());
+    }
+
+    #[test]
+    fn relative_callback_and_analysis_filters_keep_numeric_types_and_unknown_separate() {
+        let filter = serde_json::json!({"op":"and","rules":[{"field":"callback_state","op":"in","value":["open","overdue"]},{"field":"callback_age_minutes","op":"gte","value":120},{"field":"callback_attempts","op":"eq","value":0}]});
+        assert!(validate_filter(&filter).is_ok());
+        let missed = serde_json::json!({"callback_state":"overdue","callback_age_minutes":121,"callback_attempts":0});
+        assert!(matches_filter(&missed, &filter));
+        assert!(!matches_filter(
+            &serde_json::json!({"callback_state":"uncertain","callback_age_minutes":121,"callback_attempts":0}),
+            &filter
+        ));
+        assert!(!matches_filter(
+            &serde_json::json!({"callback_state":"overdue","callback_age_minutes":121,"callback_attempts":1}),
+            &filter
+        ));
+        assert!(validate_filter(
+            &serde_json::json!({"field":"callback_age_minutes","op":"gte","value":"120"})
+        )
+        .is_err());
+        assert!(validate_filter(
+            &serde_json::json!({"field":"analysis_state","op":"eq","value":"partial"})
+        )
+        .is_ok());
     }
     #[test]
     fn unknown_and_zero_scores_differ() {

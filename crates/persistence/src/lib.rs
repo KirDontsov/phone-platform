@@ -1,8 +1,8 @@
 //! Tenant-scoped persistence. Raw SQL binds all caller-controlled values.
 use chrono::{DateTime, Utc};
 pub use diesel;
-pub use diesel::PgConnection;
 use diesel::Connection as DieselConnection;
+pub use diesel::PgConnection;
 use diesel::{
     connection::SimpleConnection,
     prelude::*,
@@ -365,6 +365,20 @@ pub fn list_jobs(conn: &mut PgConnection, org: Uuid, limit: i64) -> Result<Vec<J
     .bind::<BigInt, _>(limit.clamp(1, 1000))
     .load(conn)
     .map_err(Into::into)
+}
+
+/// Complete active queue and the latest processing job per call/kind, without a UI limit.
+/// Historical payloads are deliberately omitted from this read model.
+pub fn processing_jobs(conn: &mut PgConnection, org: Uuid) -> Result<Vec<Job>> {
+    diesel::sql_query("WITH scoped AS (
+      SELECT *,row_number() OVER(PARTITION BY subject_id,kind ORDER BY created_at DESC,id DESC) AS recent
+      FROM jobs WHERE organization_id=$1
+    ) SELECT id,organization_id,kind,subject_id,''::text AS dedup_key,'{}'::jsonb AS payload,
+      state,attempts,max_attempts,NULL::text AS lease_owner,lease_until,fencing,next_attempt_at,error_code,created_at,updated_at
+      FROM scoped WHERE state IN ('queued','running','retry') OR (kind IN ('transcribe','analyze','reprocess') AND recent=1)")
+        .bind::<SqlUuid, _>(org)
+        .load(conn)
+        .map_err(Into::into)
 }
 pub fn retry_job(conn: &mut PgConnection, org: Uuid, id: Uuid) -> Result<bool> {
     diesel::sql_query(

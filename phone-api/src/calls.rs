@@ -106,21 +106,27 @@ pub fn all_calls(conn: &mut diesel::PgConnection, org: Uuid) -> Result<Vec<Value
         }
         position = end;
     }
-    let episodes = domain::callback_episodes(&calls, &policy(conn, org)?, Utc::now());
+    let now = Utc::now();
+    let episodes = domain::callback_episodes(&calls, &policy(conn, org)?, now);
     let states = episodes
         .iter()
-        .filter_map(|e| {
-            e["call_id"]
-                .as_str()
-                .map(|id| (id.to_owned(), e["state"].clone()))
-        })
+        .filter_map(|e| e["call_id"].as_str().map(|id| (id.to_owned(), e)))
         .collect::<HashMap<_, _>>();
     for call in &mut calls {
-        call["callback_state"] = states
-            .get(call["id"].as_str().unwrap_or(""))
-            .cloned()
-            .unwrap_or(json!("none"));
+        let episode = states.get(call["id"].as_str().unwrap_or(""));
+        call["callback_state"] = episode.map(|e| e["state"].clone()).unwrap_or(json!("none"));
+        call["callback_attempts"] = episode
+            .map(|e| e["attempts"].clone())
+            .unwrap_or(Value::Null);
+        call["callback_age_minutes"] = episode
+            .and_then(|e| e["opened_at"].as_str())
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|opened| {
+                json!((now - opened.with_timezone(&Utc)).num_seconds().max(0) as f64 / 60.)
+            })
+            .unwrap_or(Value::Null);
     }
+    processing::Snapshot::load(conn, org)?.enrich(&mut calls);
     Ok(calls)
 }
 fn at(v: &Value) -> chrono::DateTime<Utc> {
@@ -289,12 +295,15 @@ async fn detail(
 ) -> Result<HttpResponse, ApiError> {
     let ctx = auth::context(&state, &req, false, 0).await?;
     let id = *id;
+    let key = state.key;
+    let demo = state.demo;
     Ok(ok(state.db(move|c|{
- settings::document(c,ctx.organization_id,id,"call")?;let call=all_calls(c,ctx.organization_id)?.into_iter().find(|v|v["id"].as_str()==Some(&id.to_string())).ok_or_else(ApiError::missing)?;let children=persistence::list_children(c,ctx.organization_id,id,None)?;
+ settings::document(c,ctx.organization_id,id,"call")?;let all=all_calls(c,ctx.organization_id)?;let call=all.iter().find(|v|v["id"].as_str()==Some(&id.to_string())).cloned().ok_or_else(ApiError::missing)?;let children=persistence::list_children(c,ctx.organization_id,id,None)?;
  let child=|kind:&str|children.iter().filter(|d|d.kind==kind).cloned().map(to_json).map(|mut v|{if kind=="leg"||kind=="recording"{if let Some(map)=v.as_object_mut(){for key in ["storage_url","record_url","path","filename","download_url"]{map.remove(key);}}}v}).rev().collect::<Vec<_>>();
- let history=if let Some(key)=phone_key(&call){let mut calls=all_calls(c,ctx.organization_id)?.into_iter().filter(|v|phone_key(v).as_ref()==Some(&key)&&v["id"]!=call["id"]).collect::<Vec<_>>();calls.sort_by_key(|v|std::cmp::Reverse(at(v)));calls.truncate(30);calls}else{vec![]};
+ let history=if let Some(key)=phone_key(&call){let mut calls=all.into_iter().filter(|v|phone_key(v).as_ref()==Some(&key)&&v["id"]!=call["id"]).collect::<Vec<_>>();calls.sort_by_key(|v|std::cmp::Reverse(at(v)));calls.truncate(30);calls}else{vec![]};
  let mut audit=persistence::list_documents(c,ctx.organization_id,"audit")?.into_iter().filter(|d|d.data["subject_id"].as_str()==Some(&id.to_string())).map(to_json).take(50).collect::<Vec<_>>();audit.sort_by_key(|v|std::cmp::Reverse(v["created_at"].as_str().unwrap_or("").to_owned()));
- Ok(json!({"call":call,"legs":child("leg"),"recordings":child("recording"),"transcripts":child("transcript"),"analyses":child("analysis"),"external_links":child("external_link"),"history":history,"audit":audit}))
+ let snapshot=processing::Snapshot::load(c,ctx.organization_id)?;let mut processing=call["processing"].clone();processing["queue"]=snapshot.queue(&call);processing["providers"]=processing::providers(c,ctx.organization_id,&key,demo,&call)?;
+ Ok(json!({"call":call,"processing":processing,"legs":child("leg"),"recordings":child("recording"),"transcripts":child("transcript"),"analyses":child("analysis"),"external_links":child("external_link"),"history":history,"audit":audit}))
  }).await?))
 }
 async fn annotate(
@@ -330,27 +339,56 @@ async fn reprocess(
     if !["all", "transcribe", "analyze"].contains(&stage.as_str()) {
         return Err(ApiError::bad("Неизвестная стадия"));
     }
-    Ok(ok(state
+    let key = state.key;
+    let demo = state.demo;
+    let result = state
         .db(move |c| {
-            let d = settings::document(c, ctx.organization_id, id, "call")?;
-            let job = persistence::enqueue(
-                c,
-                ctx.organization_id,
-                "reprocess",
-                Some(id),
-                &format!("reprocess:{id}:{}", Uuid::new_v4()),
-                json!({"stage":stage,"input_version":d.version}),
-            )?;
-            settings::audit(
-                c,
-                &ctx,
-                "call.reprocess",
-                Some(id),
-                json!({"job_id":job.id,"stage":stage}),
-            )?;
-            Ok(json!({"job_id":job.id}))
+            c.transaction::<_, ApiError, _>(|c| {
+                diesel::sql_query(
+                    "SELECT id FROM documents WHERE organization_id=$1 AND id=$2 FOR UPDATE",
+                )
+                .bind::<SqlUuid, _>(ctx.organization_id)
+                .bind::<SqlUuid, _>(id)
+                .execute(c)?;
+                let d = settings::document(c, ctx.organization_id, id, "call")?;
+                if let Some(job) = persistence::processing_jobs(c, ctx.organization_id)?
+                    .into_iter()
+                    .filter(|j| {
+                        j.subject_id == Some(id)
+                            && matches!(j.kind.as_str(), "reprocess" | "transcribe" | "analyze")
+                            && processing::active(j)
+                    })
+                    .max_by_key(|j| (j.created_at, j.id))
+                {
+                    return Ok(json!({"job_id":job.id,"reused":true}));
+                }
+                processing::preflight(c, ctx.organization_id, &key, demo, &d, &stage)?;
+                let job = persistence::enqueue(
+                    c,
+                    ctx.organization_id,
+                    "reprocess",
+                    Some(id),
+                    &format!("reprocess:{id}:{}", Uuid::new_v4()),
+                    json!({"stage":stage,"input_version":d.version}),
+                )?;
+                settings::audit(
+                    c,
+                    &ctx,
+                    "call.reprocess",
+                    Some(id),
+                    json!({"job_id":job.id,"stage":stage}),
+                )?;
+                Ok(json!({"job_id":job.id}))
+            })
         })
-        .await?))
+        .await?;
+    if result["reused"] == true {
+        Ok(HttpResponse::Accepted()
+            .insert_header(("Cache-Control", "no-store"))
+            .json(json!({"data":result})))
+    } else {
+        Ok(ok(result))
+    }
 }
 async fn delete(
     state: web::Data<AppState>,
@@ -435,9 +473,36 @@ async fn media(
     }
     Ok(file.into_response(&req))
 }
-async fn callbacks(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResponse, ApiError> {
+async fn callbacks(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    q: web::Query<Query>,
+) -> Result<HttpResponse, ApiError> {
     let ctx = auth::context(&state, &req, false, 0).await?;
-    Ok(ok(state.db(move|c|{let all=all_calls(c,ctx.organization_id)?;let now=Utc::now();Ok(json!({"items":domain::callback_episodes(&all,&policy(c,ctx.organization_id)?,now),"as_of":now}))}).await?))
+    let q = q.into_inner();
+    Ok(ok(state
+        .db(move |c| {
+            let all = all_calls(c, ctx.organization_id)?;
+            let now = Utc::now();
+            let p = policy(c, ctx.organization_id)?;
+            let episodes = domain::callback_episodes(&all, &p, now);
+            let selected = filtered(all, &q, &p)?
+                .into_iter()
+                .filter_map(|v| v["id"].as_str().map(str::to_owned).map(|id| (id, v)))
+                .collect::<HashMap<_, _>>();
+            let items = episodes
+                .into_iter()
+                .filter_map(|mut e| {
+                    selected.get(e["call_id"].as_str()?).map(|call| {
+                        e["callback_age_minutes"] = call["callback_age_minutes"].clone();
+                        e["callback_attempts"] = call["callback_attempts"].clone();
+                        e
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(json!({"items":items,"as_of":now}))
+        })
+        .await?))
 }
 async fn dashboard(
     state: web::Data<AppState>,
@@ -455,7 +520,7 @@ async fn dashboard(
  if let Some(score)=call["score"].as_f64().filter(|s|s.is_finite()&&(0.0..=100.).contains(s)){sum+=score;scored+=1;employee.1+=score;employee.2+=1;scores[((score/20.).floor() as usize).min(4)]+=1;}}
  let daily=days.into_iter().map(|(date,(calls,missed))|json!({"date":date,"calls":calls,"missed":missed})).collect::<Vec<_>>();let employees=employees.into_iter().map(|(name,(calls,sum,count))|json!({"name":name,"calls":calls,"average_score":if count>0{Some((sum/count as f64*10.).round()/10.)}else{None}})).collect::<Vec<_>>();
  let open=episodes.iter().filter(|e|e["state"]=="open"||e["state"]=="overdue").count();let overdue=episodes.iter().filter(|e|e["state"]=="overdue").count();
- Ok(json!({"totals":{"calls":calls.len(),"answered":calls.iter().filter(|c|domain::human_connected(c)).count(),"missed":calls.iter().filter(|c|c["direction"]=="in"&&!domain::human_connected(c)).count(),"unhandled":open,"overdue":overdue,"analyzed":scored,"average_score":if scored>0{Some((sum/scored as f64*10.).round()/10.)}else{None}},"daily":daily,"employees":employees,"scores":scores.iter().enumerate().map(|(i,n)|json!({"bucket":format!("{}–{}",i*20,(i+1)*20),"count":n})).collect::<Vec<_>>(),"coverage":cov}))
+ Ok(json!({"totals":{"calls":calls.len(),"answered":calls.iter().filter(|c|domain::human_connected(c)).count(),"missed":calls.iter().filter(|c|c["direction"]=="in"&&!domain::human_connected(c)).count(),"unhandled":open,"overdue":overdue,"analyzed":calls.iter().filter(|call|call["analysis_state"]=="analyzed"||call["analysis_state"]=="partial").count(),"average_score":if scored>0{Some((sum/scored as f64*10.).round()/10.)}else{None}},"daily":daily,"employees":employees,"scores":scores.iter().enumerate().map(|(i,n)|json!({"bucket":format!("{}–{}",i*20,(i+1)*20),"count":n})).collect::<Vec<_>>(),"coverage":cov}))
  }).await?))
 }
 async fn confirm_roles(

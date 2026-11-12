@@ -246,6 +246,10 @@ pub fn save_connection_in_db(
             }
             merged["redirect_uri"] = json!(redirect);
         }
+        if kind == "sheets" {
+            phone_worker::integrations::sheets_columns(&merged, &json!({}), None, "", "")
+                .map_err(|_| ApiError::bad("Проверь соответствие полей колонкам: ключ звонка в A, разные колонки от B до AZ для остальных полей"))?;
+        }
         if kind == "analysis"
             && merged["provider"] == "opencode"
             && merged["base_url"].as_str() == Some("http://model-runner:4096")
@@ -674,8 +678,13 @@ pub fn validate_rubric(b: &Value) -> Result<(), ApiError> {
             || weight <= 0.
             || weight > 1000.
             || str_field(criterion, "name")?.len() > 200
-            || criterion["instruction"].as_str().unwrap_or("").len() > 4000
+            || criterion
+                .get("instruction")
+                .is_some_and(|v| !v.is_string() || v.as_str().unwrap_or("").len() > 4000)
             || criterion.get("required").is_some_and(|v| !v.is_boolean())
+            || criterion
+                .get("evaluation_mode")
+                .is_some_and(|v| !matches!(v.as_str(), Some("score" | "checklist")))
         {
             return Err(ApiError::bad(
                 "Проверьте идентификаторы, названия и веса критериев",
@@ -745,4 +754,22 @@ pub fn activate_rubric_in_db(
         audit(c, ctx, "rubric.activated", Some(id), json!({}))?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod rubric_contract_tests {
+    use super::*;
+    #[test]
+    fn rubric_accepts_legacy_and_explicit_modes_but_rejects_invalid_mode_types() {
+        let mut rubric = json!({"name":"Synthetic rubric","criteria":[{"id":"greeting","name":"Greeting","weight":1,"instruction":"Require a greeting","required":true}]});
+        validate_rubric(&rubric).unwrap();
+        for mode in ["score", "checklist"] {
+            rubric["criteria"][0]["evaluation_mode"] = json!(mode);
+            validate_rubric(&rubric).unwrap();
+        }
+        for mode in [json!("invented"), json!(false), Value::Null, json!({})] {
+            rubric["criteria"][0]["evaluation_mode"] = mode;
+            assert!(validate_rubric(&rubric).is_err());
+        }
+    }
 }

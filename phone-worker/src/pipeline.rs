@@ -32,6 +32,49 @@ impl From<diesel::result::Error> for ProviderError {
         Self::retry("worker_database_unavailable", 30)
     }
 }
+
+/// New exports use the current transcript's result. A delivery that has already
+/// attempted a write keeps its exact analysis ID, including an explicitly pinned null.
+pub fn select_export_analysis(
+    conn: &mut diesel::PgConnection,
+    org: Uuid,
+    call: Uuid,
+    delivery: Option<&Value>,
+) -> Result<Option<Document>> {
+    let analyses = persistence::list_children(conn, org, call, Some("analysis"))?;
+    if let Some(pinned) = delivery.and_then(|d| d.get("analysis_id")) {
+        if pinned.is_null() {
+            return Ok(None);
+        }
+        let id = pinned
+            .as_str()
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .ok_or_else(|| ProviderError::permanent("pinned_analysis_missing"))?;
+        return analyses
+            .into_iter()
+            .find(|a| a.id == id)
+            .map(Some)
+            .ok_or_else(|| ProviderError::permanent("pinned_analysis_missing"));
+    }
+    let transcript = persistence::list_children(conn, org, call, Some("transcript"))?
+        .into_iter()
+        .max_by_key(|d| (d.created_at, d.id));
+    let Some(transcript) = transcript.filter(|t| t.data["state"] == "ready") else {
+        return Ok(None);
+    };
+    Ok(analyses
+        .into_iter()
+        .filter(|a| {
+            a.data["transcript_id"].as_str() == Some(&transcript.id.to_string())
+                && matches!(a.data["state"].as_str(), Some("ready" | "partial"))
+        })
+        .max_by_key(|a| (a.created_at, a.id)))
+}
+pub fn export_call_data(call: &Value, analysis: Option<&Value>) -> Value {
+    let mut call = call.clone();
+    call["score"] = analysis.map(|a| a["score"].clone()).unwrap_or(Value::Null);
+    call
+}
 #[derive(Clone)]
 pub struct WorkerConfig {
     pub database_url: String,
@@ -847,7 +890,10 @@ impl Worker {
                 )?)
             })
             .await?;
-        let recording = recordings.iter().find(|r| r.data["ready"] == true).cloned();
+        let recording = recordings
+            .iter()
+            .find(|r| r.data["ready"] == true || r.data["state"] == "ready")
+            .cloned();
         if recording.is_none() && call.data["has_recording"] != true {
             return self
                 .guarded(job, move |conn| {
@@ -923,6 +969,8 @@ impl Worker {
             let mut call = persistence::get_document(conn, org, call_id)?
                 .ok_or_else(|| ProviderError::permanent("subject_missing"))?;
             call.data["stage"] = json!("analyzing");
+            call.data["processing_reason"] = Value::Null;
+            call.data["retry_pending"] = json!(false);
             persistence::save_document(
                 conn,
                 org,
@@ -962,6 +1010,8 @@ impl Worker {
             if let Some(mut doc) = persistence::get_document(conn, org, id)? {
                 if doc.kind == "call" {
                     doc.data["stage"] = json!(stage);
+                    doc.data["processing_reason"] = Value::Null;
+                    doc.data["retry_pending"] = json!(false);
                     persistence::save_document(
                         conn,
                         org,
@@ -1054,7 +1104,7 @@ impl Worker {
         result["transcript_id"] = json!(transcript.id);
         result["provider"] = config["provider"].clone();
         result["model"] = config["model"].clone();
-        result["prompt_version"] = json!("call-quality-v1");
+        result["prompt_version"] = json!("call-quality-v2-checklist");
         result["rubric_version"] = input["rubric"]
             .get("rubric_version")
             .cloned()
@@ -1087,6 +1137,8 @@ impl Worker {
             // A result for an obsolete transcript remains in history and never becomes the active result.
             if latest.as_ref().map(|d| d.id) == Some(transcript_id) {
                 current.data["stage"] = result["state"].clone();
+                current.data["processing_reason"] = Value::Null;
+                current.data["retry_pending"] = json!(false);
                 current.data["score"] = result["score"].clone();
                 if current.data["manual_lock"] != true {
                     current.data["status_id"] = result["suggested_status_id"].clone();
@@ -1210,17 +1262,6 @@ impl Worker {
             return Err(ProviderError::permanent("unsupported_integration"));
         }
         let config = self.integration_config(org, provider).await?;
-        let analyses = self
-            .db(move |conn| {
-                Ok(persistence::list_children(
-                    conn,
-                    org,
-                    call_id,
-                    Some("analysis"),
-                )?)
-            })
-            .await?;
-
         let delivery_id = job.payload["delivery_id"]
             .as_str()
             .and_then(|s| Uuid::parse_str(s).ok())
@@ -1228,15 +1269,11 @@ impl Worker {
         let existing = self
             .db(move |conn| Ok(persistence::get_document(conn, org, delivery_id)?))
             .await?;
-        let pinned_analysis = existing
-            .as_ref()
-            .and_then(|d| d.data["analysis_id"].as_str())
-            .and_then(|s| Uuid::parse_str(s).ok());
-        let analysis = if let Some(id) = pinned_analysis {
-            analyses.into_iter().find(|a| a.id == id)
-        } else {
-            analyses.into_iter().max_by_key(|a| a.created_at)
-        };
+        let pinned_delivery = existing.as_ref().map(|d| d.data.clone());
+        let analysis = self
+            .db(move |conn| select_export_analysis(conn, org, call_id, pinned_delivery.as_ref()))
+            .await?;
+        let export_call = export_call_data(&call.data, analysis.as_ref().map(|a| &a.data));
         if existing
             .as_ref()
             .is_some_and(|d| d.data["state"] == "delivered")
@@ -1271,14 +1308,14 @@ impl Worker {
             let text = format!(
                 "Звонок {}\nОценка: {}\n{}\n{}/calls/{}",
                 call.data["started_at"].as_str().unwrap_or(""),
-                call.data["score"],
+                export_call["score"],
                 summary,
                 self.config.public_url.trim_end_matches('/'),
                 call_id
             );
             DeliveryRequest::Amo(providers::required(&link.data, "deal_id")?.to_owned(), text)
         } else {
-            let mut call_data = call.data.clone();
+            let mut call_data = export_call;
             call_data["id"] = json!(call_id);
             let columns = integrations::sheets_columns(
                 &config,

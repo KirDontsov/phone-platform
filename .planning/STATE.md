@@ -2,23 +2,33 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_12_paused_by_user
-stopped_at: User paused phase12 and clarified they need to locate Telphin API credentials; drafts preserved, not deployed
+status: phase_13_locally_verified_user_uat_pending
+stopped_at: Phase13 implemented and deployed; final user UAT and live ASR/analysis/CRM/Google acceptance pending; phase12 remains paused
 last_updated: "2026-11-12"
 progress:
-  total_phases: 12
-  implemented_phases: 11
-  locally_verified_phases: 11
+  total_phases: 13
+  implemented_phases: 12
+  locally_verified_phases: 12
   accepted_phases: 0
   completed_phases: 0
-  total_plans: 31
-  implemented_plans: 29
+  total_plans: 32
+  implemented_plans: 30
   completed_plans: 1
 ---
 
 # Project State
 
-## Текущее состояние — фаза 11
+## Текущее состояние — фаза13
+
+Четыре сценария заказчика закреплены в PROJECT/REQUIREMENTS и docs/customer-workflows.md. Реализованы относительный callback X часов, явный checklist, общие Dashboard/Calls filters, теги/статусы/analysisstate, правая панель разметки, полная ширина/mobile и прозрачная ASR→analysis очередь. Preflight не ставит реальные записи на demoASR, active job dedup атомарен. Текущий анализ/оценка/экспорт привязаны к последней расшифровке; старые результаты и pinned delivery сохранены.
+
+Причина прежнего «поставлено в очередь, ничего не произошло» установлена:542 transcribe failed с demo_provider_not_allowed. Рабочая ASR/analysis конфигурация пользователем ещё не настроена. Никакие доступы/критерии автоматически не изменялись, реальные provider requests в фазе13 не выполнялись.
+
+Research → PLAN-CHECK PASS0/3 → execute → independent review/fixes → verifier → automated UAT. GSD-tools plan-structure valid3tasks. Отчёты phases/13-call-workspace-acceptance; финальная пользовательская проверка 13-UAT.md. Код/локальная проверка не равны внешней приёмке. Phase12 и stash ddddf25f4ef384b0a02359042efa4bee159a1f09 остаются приостановлены.
+
+Стенд localhost:18081: API/worker/client пересобраны и deployed healthy; остальные сервисы healthy. PostgreSQL/Actix2, worker/PG7, providers16, APIrubric1, frontend72/typecheck/build, Docker browserfixtures3/3 desktop1920/mobile390. Основные новые RED и4backendмутации подтверждены. Real read-only browser:100rows computed processing, demo blocker visible/transcribe disabled, JS0, no customer writes, own session loggedout. Детали и финальные domain checks в VERIFICATION/UAT.
+
+## История реализации — фаза11
 
 Пользователь запросил встроенный чат как в Bondscan: Codex в Docker через MCP сам подключает Телфин и настраивает статусы, теги, фильтры, шкалу и правила перезвона. Доступы передаются защищённой карточкой внутри чата; модель получает encrypted credential_ref. Новый assistant-runner отделён от анализатора записей, у которого MCP остаётся выключенным.
 

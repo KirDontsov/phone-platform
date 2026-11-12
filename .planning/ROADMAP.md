@@ -134,3 +134,11 @@ Research →3 plans → independent plan-check →revision1/3 PASS → execute. 
 **Plans:** 12-01 fixed portal +scoped durableprovision;12-02 ordinaryaccessUX+9toolintegration.
 
 Research: officialbootstrap +anonymousloginHTML; behindauthmarkup/livepermissionspending. Контракт docs/contracts/telphin-onboarding-v1.md. Дваплана/5tasks structurevalid. Independentcheck/revision gatepending; execute не объявленcompleted.
+
+### Phase 13: Call Workspace Acceptance
+
+**Goal:** Довести четыре подтверждённых сценария заказчика до понятного рабочего экрана и прозрачного ASR→analysis pipeline.
+**Depends on:** Phases4–9,11. Фаза12 приостановлена и не является зависимостью.
+**Requirements:** CALL-01/03, TAG-01, ASR-01, AI-02, FLT-03/04, DASH-02, OPS-01, CRM-01, SHEET-01.
+**Plan:** 13-01 processing/relative callbacks, Dashboard/shared filters/sidebar, checklist/Sheets workflow.
+Research → независимый PLAN-CHECK PASS0/3 → execute → independent implementation review/fixes → verifier → automated UAT. Локальная реализация не закрывает живое ASR/модельное качество/CRM/Google и финальную пользовательскую приёмку. Все результаты: phases/13-call-workspace-acceptance.

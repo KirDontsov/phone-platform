@@ -119,6 +119,12 @@ pub fn validate_analysis(
             .as_f64()
             .filter(|v| v.is_finite() && *v > 0. && *v <= 1000.)
             .ok_or("invalid_rubric_weight")?;
+        if definition
+            .get("evaluation_mode")
+            .is_some_and(|v| !matches!(v.as_str(), Some("score" | "checklist")))
+        {
+            return Err("invalid_evaluation_mode".into());
+        }
         if definition_map.insert(id, (definition, weight)).is_some() {
             return Err("duplicate_rubric_criterion".into());
         }
@@ -134,7 +140,25 @@ pub fn validate_analysis(
     let mut weighted = 0.;
     let mut total_weight = 0.;
     let mut insufficient = false;
+    let roles_known = transcript["role_confidence"].as_str() == Some("known");
     for criterion in criteria {
+        let allowed = [
+            "id",
+            "name",
+            "weight",
+            "score",
+            "status",
+            "reason",
+            "evidence",
+            "evaluation_mode",
+            "fulfilled",
+        ];
+        if criterion
+            .as_object()
+            .is_none_or(|o| o.keys().any(|k| !allowed.contains(&k.as_str())))
+        {
+            return Err("unknown_criterion_property".into());
+        }
         let id = string(criterion, "id")?.to_owned();
         if !seen.insert(id.clone()) {
             return Err("duplicate_analysis_criterion".into());
@@ -142,7 +166,7 @@ pub fn validate_analysis(
         let (definition, weight) = definition_map
             .get(id.as_str())
             .ok_or("unknown_analysis_criterion")?;
-        let status = string(criterion, "status")?.to_owned();
+        let mut status = string(criterion, "status")?.to_owned();
         if !["scored", "not_applicable", "insufficient_evidence"].contains(&status.as_str()) {
             return Err("invalid_criterion_status".into());
         }
@@ -176,6 +200,33 @@ pub fn validate_analysis(
                 return Err("evidence_not_in_transcript".into());
             }
         }
+        let mode = definition["evaluation_mode"].as_str().unwrap_or("score");
+        if mode == "checklist" {
+            if status == "scored" {
+                let fulfilled = criterion["fulfilled"]
+                    .as_bool()
+                    .ok_or("checklist_verdict_required")?;
+                let score = if fulfilled { 5. } else { 0. };
+                if criterion["score"].as_f64() != Some(score) {
+                    return Err("checklist_score_mismatch".into());
+                }
+                if !roles_known {
+                    status = "insufficient_evidence".into();
+                    criterion["status"] = json!(status);
+                    criterion["score"] = Value::Null;
+                    criterion["fulfilled"] = Value::Null;
+                    criterion["reason"] = json!(
+                        "Роли участников не подтверждены; выполнение требования не определено."
+                    );
+                }
+            } else if !criterion.get("fulfilled").is_some_and(Value::is_null) {
+                return Err("unscored_checklist_has_verdict".into());
+            }
+        } else {
+            // Scaled historical criteria have no trustworthy binary verdict.
+            criterion["fulfilled"] = Value::Null;
+        }
+        criterion["evaluation_mode"] = json!(mode);
         if status == "scored" {
             let score = criterion["score"]
                 .as_f64()
@@ -194,7 +245,6 @@ pub fn validate_analysis(
         criterion["name"] = definition["name"].clone();
         criterion["weight"] = json!(weight);
     }
-    let roles_known = transcript["role_confidence"].as_str() == Some("known");
     let score = if !insufficient && roles_known && total_weight > 0. {
         Some((weighted / total_weight * 1000.).round() / 10.)
     } else {
@@ -280,5 +330,71 @@ mod tests {
         let duplicate = a["criteria"][0].clone();
         a["criteria"].as_array_mut().unwrap().push(duplicate);
         assert!(validate_analysis(&mut a, &transcript(), &rubric(), &[], &[]).is_err());
+    }
+
+    #[test]
+    fn checklist_verdict_is_explicit_and_weighted_without_guessing_from_score() {
+        let mut r = rubric();
+        r["criteria"][0]["evaluation_mode"] = json!("checklist");
+        for (fulfilled, score) in [(true, 5), (false, 0)] {
+            let mut a = analysis();
+            a["criteria"][0]["fulfilled"] = json!(fulfilled);
+            a["criteria"][0]["score"] = json!(score);
+            validate_analysis(&mut a, &transcript(), &r, &[], &[]).unwrap();
+            assert_eq!(a["criteria"][0]["evaluation_mode"], "checklist");
+            assert_eq!(a["criteria"][0]["fulfilled"], fulfilled);
+            assert_eq!(a["score"], (score * 20) as f64);
+        }
+        for fulfilled in [Value::Null, json!("yes"), json!(1)] {
+            let mut a = analysis();
+            a["criteria"][0]["fulfilled"] = fulfilled;
+            assert!(validate_analysis(&mut a, &transcript(), &r, &[], &[]).is_err());
+        }
+        let mut missing = analysis();
+        missing["criteria"][0]["score"] = json!(5);
+        assert!(validate_analysis(&mut missing, &transcript(), &r, &[], &[]).is_err());
+        let mut contradictory = analysis();
+        contradictory["criteria"][0]["fulfilled"] = json!(false);
+        contradictory["criteria"][0]["score"] = json!(5);
+        assert!(validate_analysis(&mut contradictory, &transcript(), &r, &[], &[]).is_err());
+    }
+
+    #[test]
+    fn checklist_unknown_is_not_false_and_unknown_roles_cannot_produce_a_verdict() {
+        let mut r = rubric();
+        r["criteria"][0]["evaluation_mode"] = json!("checklist");
+        let mut a = analysis();
+        a["criteria"][0]["status"] = json!("insufficient_evidence");
+        a["criteria"][0]["fulfilled"] = Value::Null;
+        a["criteria"][0]["score"] = Value::Null;
+        a["criteria"][0]["evidence"] = json!([]);
+        validate_analysis(&mut a, &transcript(), &r, &[], &[]).unwrap();
+        assert!(a["score"].is_null());
+        assert!(a["criteria"][0]["fulfilled"].is_null());
+        a["criteria"][0]["fulfilled"] = json!(false);
+        assert!(validate_analysis(&mut a, &transcript(), &r, &[], &[]).is_err());
+
+        let mut a = analysis();
+        a["criteria"][0]["score"] = json!(5);
+        a["criteria"][0]["fulfilled"] = json!(true);
+        let mut t = transcript();
+        t["role_confidence"] = json!("uncertain");
+        validate_analysis(&mut a, &t, &r, &[], &[]).unwrap();
+        assert_eq!(a["criteria"][0]["status"], "insufficient_evidence");
+        assert!(a["criteria"][0]["fulfilled"].is_null());
+        assert!(a["criteria"][0]["score"].is_null());
+    }
+
+    #[test]
+    fn legacy_scales_do_not_acquire_checklist_verdicts_and_unknown_modes_fail() {
+        let mut a = analysis();
+        a["criteria"][0]["fulfilled"] = json!(true);
+        validate_analysis(&mut a, &transcript(), &rubric(), &[], &[]).unwrap();
+        assert!(a["criteria"][0]["fulfilled"].is_null());
+        assert_eq!(a["criteria"][0]["evaluation_mode"], "score");
+        assert_eq!(a["score"], 80.);
+        let mut r = rubric();
+        r["criteria"][0]["evaluation_mode"] = json!("invented");
+        assert!(validate_analysis(&mut analysis(), &transcript(), &r, &[], &[]).is_err());
     }
 }

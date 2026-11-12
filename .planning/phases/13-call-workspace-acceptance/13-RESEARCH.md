@@ -1,0 +1,11 @@
+# Research — 2026-11-12
+
+Заказчик подтвердил четыре сценария: настраиваемый по возрасту фильтр пропущенных без перезвона, произвольные критерии после ASR, смысловые теги/тип обращения, передача результата в amoCRM или выбранную Google Таблицу. Требуется сквозная удобная работа с Dashboard, полная ширина, правая панель разметки и прозрачная обработка.
+
+Исследовано: Dashboard/Calls/Detail/Callbacks/Settings/Integrations Vue, API calls/settings/operations, worker pipeline/models/integrations, domain callbacks/scoring/filters. API и журнал доступны независимо от AI. Конструкторы rubric/taxonomy и export adapters уже существуют; новая фаза закрывает пользовательские разрывы, не заменяет основу.
+
+Фактический runtime: worker healthy; 542 transcribe failed с demo_provider_not_allowed. У реальных звонков нет рабочего ASR: демонстрационные настройки отклоняются. Это не большая активная очередь; нельзя обещать срок без настроенного провайдера. Собран только агрегат, credentials/аудио/тексты не извлекались. Авторизация Codex помощника сама по себе не даёт ASR.
+
+UX: Dashboard нет tag/status/analysis фильтров; таблица скрывает бизнес-статус и дополнительные теги. stage/score недостаточны для готовности анализа. reprocess не показывает ошибки/job, разрешает дубли; operations только owner и200 последних jobs. max-width1600 оставляет края. FilterBuilder требует UUID вручную. Глобальный callback_minutes не заменяет локальное x часов. Rubric только score0..5, нет однозначного checklist результата. Sheets одна выбранная таблица/лист на компанию и JSON mapping; это соответствует выгрузке в произвольную доступную таблицу, но не множеству одновременных destinations.
+
+Архитектура: tenant-scoped bulk projections на calls; не отдавать payload/lease_owner, paths, provider error text. Статусы существующего анализа и нового задания независимы: не терять готовый результат из-за reprocess. Очередь не обещает FIFO SLA (worker общий, retries/разные виды); выдавать только количество готовых задач текущей компании и следующий retry. Callback age вычислять по полному tenant history до date/search filters; coverage uncertain не выдавать за доказанный неперезвон. Точные абсолютные даты в saved filter не использовать для плавающего возраста.

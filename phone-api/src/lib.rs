@@ -3,6 +3,7 @@ pub mod telphin_identity;
 pub mod auth;
 pub mod calls;
 pub mod operations;
+pub mod processing;
 pub mod seed;
 pub mod settings;
 
