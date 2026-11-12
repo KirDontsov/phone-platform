@@ -61,3 +61,15 @@ Worker baseline в workspace: 6 library tests (один с настоящим Po
 - Daily budget — консервативная reservation, не биллинг. Неизвестная стоимость сохраняется null; API отдельно показывает известную стоимость/число неизвестных. Model endpoint context/output bounded, реальные тарифы и нагрузка не подтверждены.
 - Calls/filter/dashboard сейчас загружают tenant history и вычисляют AST/episodes в памяти. SQL read models/потоковая история нужны при существенно большей нагрузке; результаты отдельного локального synthetic load не доказывают production SLA. Точный объём пользователя ещё не задан.
 - Документ не подтверждает production deployment, восстановление backup, visual UAT или полноту всех 38 requirements только по наличию файлов. Их фактические отчёты и конечный пользовательский тест учитываются отдельно.
+
+## Повторное review — 2026-11-12
+
+Root проверил текущие worker/API/frontend контракты и внёс maintenance fixes. Это собственное review изменений, не новый независимый аудит.
+
+- **P1, смысловая разметка:** LLM получала только UUID разрешённых тегов/статусов без названий. Теперь вход дополнен tenant-scoped `tag_definitions` / `status_definitions` с ID и названием, архивные значения исключены. UUID allowlists и строгая серверная валидация сохранены. Unit regression + настоящий loopback OpenAI-compatible transport подтверждают передачу названий; реальная точность выбора требует live quality evaluation.
+- **P1, неопределённая доставка:** ошибка чтения/обновления credentials во время reconciliation переводила delivery из uncertain в failed. Следующий retry мог снова разрешить POST/append. Теперь `requires_reconciliation` сохраняется до подтверждённой доставки, в том числе после повторной ошибки и при прежнем attempting после crash. Подготовка связи со сделкой/колонок выполняется до отметки attempting. Unit проверяет цепочки timeout/429/permission/configuration errors; реальная отдельная PostgreSQL проверяет сохранение uncertain/marker после configuration failure и ручного retry. Внешние CRM/Sheets не вызывались.
+- **P2, отключение:** явный disconnected ASR/analysis игнорировался и в DEMO_MODE подменялся учебным провайдером. Теперь явное отключение даёт configuration_missing; fallback допустим только при отсутствии документа подключения. PG regression подтверждает отсутствие выдуманной расшифровки после отключения.
+
+Свежие проверки: worker33/33 с TEST_DATABASE_URL отдельной phone_platform_review_test (8 library, 5 loopback HTTP, 6 PG pipeline, 14 provider), contracts/domain15/15, Python80/80, frontend20/20; git diff --check PASS. 4 новых Rust regressions увеличивают совокупный ранее проверенный набор с47 до51; API2/persistence1 отдельно повторно не запускались, полный browser13 здесь не повторялся. Docker API/worker пересобраны; актуальный целевой smoke записан в data/eval/review-20261112-smoke.json.
+
+Для пользователя добавлена короткая инструкция в docs/uat.md. Live acceptance Телфин/ASR/LLM/CRM/Google остаётся открытым.

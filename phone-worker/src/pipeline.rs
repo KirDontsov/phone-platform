@@ -68,6 +68,24 @@ impl WorkerConfig {
         })
     }
 }
+/// A previous ambiguous write stays ambiguous even if a later read/refresh fails.
+fn delivery_requires_reconciliation(data: &Value) -> bool {
+    data["requires_reconciliation"] == true
+        || matches!(data["state"].as_str(), Some("attempting" | "uncertain"))
+}
+fn preserve_delivery_failure(data: &mut Value, code: &str) {
+    let uncertain = delivery_requires_reconciliation(data) || code == "delivery_uncertain";
+    data["requires_reconciliation"] = json!(uncertain);
+    data["state"] = json!(if uncertain { "uncertain" } else { "failed" });
+}
+fn analysis_taxonomy(documents: Vec<Document>) -> Vec<Value> {
+    documents
+        .into_iter()
+        .filter(|d| d.data["archived"] != true)
+        .map(|d| json!({"id":d.id,"name":d.data["name"]}))
+        .collect()
+}
+
 #[derive(Clone)]
 pub struct Worker {
     pub pool: Pool,
@@ -170,8 +188,11 @@ impl Worker {
             .documents(org, "connection")
             .await?
             .into_iter()
-            .find(|d| d.data["kind"] == kind && d.data["state"] != "disconnected");
+            .find(|d| d.data["kind"] == kind);
         if let Some(doc) = doc {
+            if doc.data["state"] == "disconnected" {
+                return Err(ProviderError::permanent("configuration_missing"));
+            }
             if let Some(next) = doc.data["next_request_at"]
                 .as_i64()
                 .filter(|v| *v > Utc::now().timestamp())
@@ -408,11 +429,7 @@ impl Worker {
                     let mut doc = persistence::get_document(conn, org, delivery_id)?
                         .map(|d| d.data)
                         .unwrap_or_else(|| json!({"call_id":id}));
-                    doc["state"] = json!(if code == "delivery_uncertain" {
-                        "uncertain"
-                    } else {
-                        "failed"
-                    });
+                    preserve_delivery_failure(&mut doc, &code);
                     doc["error_code"] = json!(code);
                     persistence::save_document(
                         conn,
@@ -998,19 +1015,15 @@ impl Worker {
             .filter(|r| r.data["active"] == true)
             .max_by_key(|r| r.created_at)
             .ok_or_else(|| ProviderError::permanent("active_rubric_required"))?;
-        let tags = self
-            .documents(org, "tag")
-            .await?
-            .into_iter()
-            .filter(|t| t.data["archived"] != true)
-            .map(|t| t.id.to_string())
+        let tag_definitions = analysis_taxonomy(self.documents(org, "tag").await?);
+        let status_definitions = analysis_taxonomy(self.documents(org, "status").await?);
+        let tags = tag_definitions
+            .iter()
+            .filter_map(|d| d["id"].as_str().map(str::to_owned))
             .collect::<Vec<_>>();
-        let statuses = self
-            .documents(org, "status")
-            .await?
-            .into_iter()
-            .filter(|t| t.data["archived"] != true)
-            .map(|t| t.id.to_string())
+        let statuses = status_definitions
+            .iter()
+            .filter_map(|d| d["id"].as_str().map(str::to_owned))
             .collect::<Vec<_>>();
         let (_, config) = self.connection_config(org, "analysis").await?;
         self.reserve_budget(job, &config).await?;
@@ -1022,7 +1035,7 @@ impl Worker {
             .filter(|c| c.data["phone"] == call.data["phone"] && c.data["deleted"] != true)
             .map(|d| persistence::document_json(&d))
             .collect::<Vec<_>>();
-        let input = json!({"call":call.data,"transcript":transcript.data,"rubric":rubric.data,"allowed_statuses":statuses,"allowed_tags":tags});
+        let input = json!({"call":call.data,"transcript":transcript.data,"rubric":rubric.data,"allowed_statuses":statuses,"allowed_tags":tags,"status_definitions":status_definitions,"tag_definitions":tag_definitions});
         let mut result = models::analyze(&config, &input, self.config.demo_mode).await?;
         domain::validate_analysis(
             &mut result,
@@ -1232,7 +1245,7 @@ impl Worker {
         }
         let uncertain = existing
             .as_ref()
-            .is_some_and(|d| matches!(d.data["state"].as_str(), Some("attempting" | "uncertain")));
+            .is_some_and(|d| delivery_requires_reconciliation(&d.data));
         let marker = existing
             .as_ref()
             .and_then(|d| d.data["marker"].as_str())
@@ -1240,22 +1253,12 @@ impl Worker {
             .unwrap_or_else(|| {
                 integrations::delivery_marker(org, call_id, analysis.as_ref().map(|a| a.id))
             });
-        let provider_owned = provider.to_string();
-        let delivery = json!({"call_id":call_id,"provider":provider,"state":"attempting","marker":marker,"attempted_at":Utc::now(),"job_id":job.id,"analysis_id":analysis.as_ref().map(|a|a.id)});
-        self.guarded(job, move |conn| {
-            persistence::save_document(
-                conn,
-                org,
-                delivery_id,
-                "delivery",
-                Some(call_id),
-                delivery,
-                None,
-            )?;
-            Ok(())
-        })
-        .await?;
-        let result = if provider == "amocrm" {
+        enum DeliveryRequest {
+            Amo(String, String),
+            Sheets(Vec<Value>),
+        }
+        // Validate local prerequisites before recording that an external write may start.
+        let request = if provider == "amocrm" {
             let links = self.documents(org, "external_link").await?;
             let link = links
                 .iter()
@@ -1273,14 +1276,7 @@ impl Worker {
                 self.config.public_url.trim_end_matches('/'),
                 call_id
             );
-            integrations::deliver_amocrm(
-                &config,
-                providers::required(&link.data, "deal_id")?,
-                &marker,
-                &text,
-                uncertain,
-            )
-            .await
+            DeliveryRequest::Amo(providers::required(&link.data, "deal_id")?.to_owned(), text)
         } else {
             let mut call_data = call.data.clone();
             call_data["id"] = json!(call_id);
@@ -1291,8 +1287,36 @@ impl Worker {
                 &self.config.public_url,
                 &marker,
             )?;
-            integrations::deliver_sheets(&config, &format!("{org}:{call_id}"), columns, uncertain)
+            DeliveryRequest::Sheets(columns)
+        };
+        let provider_owned = provider.to_string();
+        let delivery = json!({"call_id":call_id,"provider":provider,"state":"attempting","requires_reconciliation":uncertain,"marker":marker,"attempted_at":Utc::now(),"job_id":job.id,"analysis_id":analysis.as_ref().map(|a|a.id)});
+        self.guarded(job, move |conn| {
+            persistence::save_document(
+                conn,
+                org,
+                delivery_id,
+                "delivery",
+                Some(call_id),
+                delivery,
+                None,
+            )?;
+            Ok(())
+        })
+        .await?;
+        let result = match request {
+            DeliveryRequest::Amo(deal_id, text) => {
+                integrations::deliver_amocrm(&config, &deal_id, &marker, &text, uncertain).await
+            }
+            DeliveryRequest::Sheets(columns) => {
+                integrations::deliver_sheets(
+                    &config,
+                    &format!("{org}:{call_id}"),
+                    columns,
+                    uncertain,
+                )
                 .await
+            }
         };
         let mut data = existing.map(|d| d.data).unwrap_or_else(
             || json!({"call_id":call_id,"provider":provider_owned,"job_id":job.id,"marker":marker,"analysis_id":analysis.as_ref().map(|a|a.id)}),
@@ -1303,6 +1327,7 @@ impl Worker {
                     data[k] = v.clone();
                 }
                 data["delivered_at"] = json!(Utc::now());
+                data["requires_reconciliation"] = json!(false);
                 self.final_write(job, move |conn| {
                     persistence::save_document(
                         conn,
@@ -1326,11 +1351,10 @@ impl Worker {
                 .await
             }
             Err(error) => {
-                data["state"] = json!(if error.code == "delivery_uncertain" {
-                    "uncertain"
-                } else {
-                    "failed"
-                });
+                if uncertain {
+                    data["requires_reconciliation"] = json!(true);
+                }
+                preserve_delivery_failure(&mut data, &error.code);
                 data["error_code"] = json!(error.code);
                 self.guarded(job, move |conn| {
                     persistence::save_document(
@@ -2323,5 +2347,51 @@ mod media_tests {
             };
         }
         assert!(!path.exists());
+    }
+    #[test]
+    fn reconciliation_failures_never_clear_prior_ambiguous_writes() {
+        for original in [
+            json!({"state":"uncertain","marker":"stable"}),
+            json!({"state":"attempting","marker":"stable"}),
+            json!({"state":"failed","requires_reconciliation":true,"marker":"stable"}),
+        ] {
+            for error in [
+                "provider_rate_limited",
+                "provider_timeout",
+                "configuration_missing",
+                "provider_permission_denied",
+            ] {
+                let mut delivery = original.clone();
+                preserve_delivery_failure(&mut delivery, error);
+                preserve_delivery_failure(&mut delivery, error); // export handler followed by record_failure.
+                assert_eq!(delivery["state"], "uncertain");
+                assert!(delivery_requires_reconciliation(&delivery));
+                assert_eq!(delivery["marker"], "stable");
+            }
+        }
+        let mut rejected = json!({"state":"failed"});
+        preserve_delivery_failure(&mut rejected, "provider_rate_limited");
+        assert_eq!(rejected["state"], "failed");
+        assert!(!delivery_requires_reconciliation(&rejected));
+        preserve_delivery_failure(&mut rejected, "delivery_uncertain");
+        assert!(delivery_requires_reconciliation(&rejected));
+    }
+    #[test]
+    fn analysis_receives_taxonomy_labels_and_excludes_archived_values() {
+        let make = |name: &str, archived: bool| Document {
+            organization_id: Uuid::new_v4(),
+            id: Uuid::new_v4(),
+            kind: "tag".into(),
+            parent_id: None,
+            data: json!({"name":name,"archived":archived}),
+            version: 1,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let active = make("Запрос стоимости", false);
+        let archived = make("Архивный тег", true);
+        let id = active.id;
+        let result = analysis_taxonomy(vec![active, archived]);
+        assert_eq!(result, vec![json!({"id":id,"name":"Запрос стоимости"})]);
     }
 }

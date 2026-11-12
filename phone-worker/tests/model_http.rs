@@ -133,12 +133,15 @@ async fn openai_compatible_request_uses_json_mode_and_bounded_output() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::set_var("PROVIDER_ALLOWED_HOSTS", "127.0.0.1");
     let(url,requests,server)=scripted_server(vec![("POST","/v1/chat/completions",200,json!({"choices":[{"message":{"content":"{\"summary\":\"synthetic\"}"}}],"usage":{"prompt_tokens":7,"completion_tokens":4}}))]).await;
-    let result=tokio::time::timeout(std::time::Duration::from_secs(5),models::analyze(&json!({"provider":"openai","base_url":format!("{url}v1"),"api_key":"synthetic","model":"configured-model","max_output_tokens":2048}),&json!({"transcript":{"segments":[]}}),false)).await.unwrap().unwrap();
+    let result=tokio::time::timeout(std::time::Duration::from_secs(5),models::analyze(&json!({"provider":"openai","base_url":format!("{url}v1"),"api_key":"synthetic","model":"configured-model","max_output_tokens":2048}),&json!({"transcript":{"segments":[]},"status_definitions":[{"id":"status-1","name":"Нужен перезвон"}],"tag_definitions":[{"id":"tag-1","name":"Запрос стоимости"}]}),false)).await.unwrap().unwrap();
     server.await.unwrap();
     assert_eq!(result["usage"]["input_tokens"], 7);
     let rows = requests.lock().unwrap();
     assert_eq!(rows[0].1["response_format"]["type"], "json_object");
     assert_eq!(rows[0].1["max_tokens"], 2048);
+    let prompt = rows[0].1["messages"].to_string();
+    assert!(prompt.contains("Нужен перезвон"));
+    assert!(prompt.contains("Запрос стоимости"));
     std::env::remove_var("PROVIDER_ALLOWED_HOSTS");
 }
 #[tokio::test]

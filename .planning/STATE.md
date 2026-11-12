@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: Phone Platform
 status: ready_for_final_uat
 stopped_at: Implemented and locally verified all ten phase scopes; user UAT and real-provider acceptance pending
-last_updated: "2026-11-11"
+last_updated: "2026-11-12"
 progress:
   total_phases: 10
   implemented_phases: 10
@@ -50,3 +50,7 @@ Research → 26 plans → независимый PLAN-CHECK → 2 baseline revis
 Финальный пользовательский тест по docs/uat.md и настройка разрешённых аккаунтов. Нужно сверить полноту/границу истории Телфина, качество русского ASR/диаризации/оценок на reference corpus, фактические OAuth/scopes/доставку CRM/Sheets и тарифы моделей. Публичный deployment target не задан и не публиковался. Вопросы пользователю не задаются: открытые параметры описаны как настраиваемые предположения.
 
 Отклонения: polling5min с overlap вместо webhook lifecycle; фильтры/агрегаты пока Rust in-memory вместо SQL read models; единый retention компании. Никакое неподтверждённое внешнее качество не называется PASS. Следующее действие — пользовательский финальный тест готового стенда, затем исправление конкретных замечаний.
+
+## Повторное code review — 2026-11-12
+
+Исправлены: передача названий тегов/статусов модели; сохранение unknown-исхода доставки через ошибку reconciliation/credentials и retry; явное отключение ASR/analysis без demo fallback. Подробнее reviews/IMPLEMENTATION-REVIEW.md, раздел2026-11-12. Свежие worker33 (включая настоящую отдельную PostgreSQL), core15, Python80, frontend20 PASS; новые4 regressions, совокупный набор Rust51 (API2/persistence1 — прежние результаты, не новый повтор). API/worker Docker пересобраны; полный browser13 — прежний baseline, текущий targeted smoke проверяет новые версии анализа и сохранение ручных полей. Короткая пользовательская проверка: docs/uat.md → «Быстрая проверка». Внешние аккаунты не использовались.

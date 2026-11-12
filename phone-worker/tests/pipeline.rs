@@ -478,3 +478,164 @@ async fn purge_unlinks_shared_demo_audio_only_after_last_recording_reference() {
         .execute(&mut c)
         .unwrap();
 }
+
+fn review_worker(demo_mode: bool) -> Option<(Worker, tempfile::TempDir, Uuid)> {
+    let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+        eprintln!("SKIP PostgreSQL review regression: TEST_DATABASE_URL not configured");
+        return None;
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let org = Uuid::new_v4();
+    let worker = Worker::new(WorkerConfig {
+        database_url,
+        encryption_key: [9; 32],
+        media_root: directory.path().into(),
+        demo_mode,
+        rabbitmq_url: None,
+        public_url: "http://localhost".into(),
+        poll_seconds: 1,
+    })
+    .unwrap();
+    let mut conn = persistence::connection(&worker.pool).unwrap();
+    diesel::sql_query(
+        "INSERT INTO organizations(id,name) VALUES($1,'Review regression synthetic')",
+    )
+    .bind::<SqlUuid, _>(org)
+    .execute(&mut conn)
+    .unwrap();
+    Some((worker, directory, org))
+}
+
+#[tokio::test]
+async fn disconnected_demo_provider_is_not_reenabled_by_fallback() {
+    let _serial = PG_TEST_LOCK.lock().unwrap();
+    let Some((worker, directory, org)) = review_worker(true) else {
+        return;
+    };
+    let call = Uuid::new_v4();
+    let relative = format!("{org}/synthetic.wav");
+    std::fs::create_dir(directory.path().join(org.to_string())).unwrap();
+    std::fs::write(directory.path().join(&relative), b"RIFF0000WAVEsynthetic").unwrap();
+    {
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        persistence::save_document(
+            &mut conn,
+            org,
+            call,
+            "call",
+            None,
+            json!({"synthetic":true,"has_recording":true,"duration":30,"stage":"imported"}),
+            None,
+        )
+        .unwrap();
+        persistence::save_document(
+            &mut conn,
+            org,
+            Uuid::new_v4(),
+            "recording",
+            Some(call),
+            json!({"path":relative,"ready":true,"state":"ready","duration":30}),
+            None,
+        )
+        .unwrap();
+        persistence::save_document(
+            &mut conn,
+            org,
+            Uuid::new_v4(),
+            "connection",
+            None,
+            json!({"kind":"asr","state":"disconnected","config":{}}),
+            None,
+        )
+        .unwrap();
+        persistence::enqueue(
+            &mut conn,
+            org,
+            "transcribe",
+            Some(call),
+            "disabled-demo",
+            json!({}),
+        )
+        .unwrap();
+    }
+    assert!(worker.run_once().await.unwrap());
+    let mut conn = persistence::connection(&worker.pool).unwrap();
+    let current = persistence::get_document(&mut conn, org, call)
+        .unwrap()
+        .unwrap();
+    assert_eq!(current.data["processing_reason"], "configuration_missing");
+    assert!(
+        persistence::list_children(&mut conn, org, call, Some("transcript"))
+            .unwrap()
+            .is_empty()
+    );
+    diesel::sql_query("DELETE FROM organizations WHERE id=$1")
+        .bind::<SqlUuid, _>(org)
+        .execute(&mut conn)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn ambiguous_delivery_survives_configuration_failure_and_manual_retry() {
+    let _serial = PG_TEST_LOCK.lock().unwrap();
+    let Some((worker, _directory, org)) = review_worker(false) else {
+        return;
+    };
+    for state in ["uncertain", "attempting"] {
+        let call = Uuid::new_v4();
+        let (job, delivery) = {
+            let mut conn = persistence::connection(&worker.pool).unwrap();
+            persistence::save_document(
+                &mut conn,
+                org,
+                call,
+                "call",
+                None,
+                json!({"stage":"ready"}),
+                None,
+            )
+            .unwrap();
+            let job = persistence::enqueue(
+                &mut conn,
+                org,
+                "export",
+                Some(call),
+                state,
+                json!({"provider":"amocrm"}),
+            )
+            .unwrap();
+            let delivery = Uuid::new_v5(&job.id, b"delivery");
+            persistence::save_document(
+                &mut conn,
+                org,
+                delivery,
+                "delivery",
+                Some(call),
+                json!({"state":state,"marker":"stable-review-marker","analysis_id":null}),
+                None,
+            )
+            .unwrap();
+            (job, delivery)
+        };
+        for attempt in 0..2 {
+            if attempt > 0 {
+                let mut conn = persistence::connection(&worker.pool).unwrap();
+                assert!(persistence::retry_job(&mut conn, org, job.id).unwrap());
+            }
+            assert!(worker.run_once().await.unwrap());
+            let mut conn = persistence::connection(&worker.pool).unwrap();
+            let delivery = persistence::get_document(&mut conn, org, delivery)
+                .unwrap()
+                .unwrap();
+            assert_eq!(delivery.data["state"], "uncertain");
+            assert_eq!(delivery.data["requires_reconciliation"], true);
+            assert_eq!(delivery.data["marker"], "stable-review-marker");
+            assert_eq!(delivery.data["error_code"], "configuration_missing");
+        }
+    }
+    let mut conn = persistence::connection(&worker.pool).unwrap();
+    diesel::sql_query("DELETE FROM organizations WHERE id=$1")
+        .bind::<SqlUuid, _>(org)
+        .execute(&mut conn)
+        .unwrap();
+}
