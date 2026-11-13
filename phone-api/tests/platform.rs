@@ -419,10 +419,20 @@ async fn platform_auth_tenants_csrf_roles_annotations_filters_and_secrets() {
         StatusCode::BAD_REQUEST,
         "Invalid work calendar must be rejected, not silently persisted"
     );
+    let invalid_retention = request!(
+        patch, "/api/organization", json!({"retention_enabled":"true"}),
+        Some(cookie.as_str()), Some(csrf.as_str())
+    );
+    assert_eq!(invalid_retention.status(), StatusCode::BAD_REQUEST);
+    let disabled_cleanup = request!(
+        post, "/api/operations/purge", json!({}),
+        Some(cookie.as_str()), Some(csrf.as_str())
+    );
+    assert_eq!(disabled_cleanup.status(), StatusCode::BAD_REQUEST);
     let retention = request!(
         patch,
         "/api/organization",
-        json!({"retention_days":365}),
+        json!({"retention_days":365,"retention_enabled":true}),
         Some(cookie.as_str()),
         Some(csrf.as_str())
     );

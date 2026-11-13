@@ -529,6 +529,12 @@ pub fn patch_org_in_db(
         if !extra.is_object() {
             extra = json!({});
         }
+        if let Some(enabled) = b.get("retention_enabled") {
+            if !enabled.is_boolean() {
+                return Err(ApiError::bad("Автоудаление должно быть включено или выключено"));
+            }
+            extra["retention_enabled"] = enabled.clone();
+        }
         for key in [
             "working_hours",
             "callback_allow_inbound",

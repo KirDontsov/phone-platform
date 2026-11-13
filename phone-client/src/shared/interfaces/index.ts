@@ -1,5 +1,5 @@
 export type Role='owner'|'manager'|'reviewer'
-export interface Organization {id:string;name:string;timezone:string;callback_minutes:number;retention_days:number;working_hours?:unknown;callback_allow_inbound?:boolean;callback_min_duration?:number}
+export interface Organization {id:string;name:string;timezone:string;callback_minutes:number;retention_days:number;retention_enabled?:boolean;working_hours?:unknown;callback_allow_inbound?:boolean;callback_min_duration?:number}
 export interface Me {user:{id:string;name:string;email:string};organization:Organization;organizations:{id:string;name:string;role:Role}[];role:Role;csrf_token:string;demo_mode:boolean}
 export type Filter = {op:'and'|'or';rules:Filter[]} | {op:'not';rule:Filter} | {field:string;op:string;value?:unknown}
 export interface Taxon {id:string;name:string;color:string;archived:boolean}

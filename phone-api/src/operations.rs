@@ -84,7 +84,7 @@ struct RetentionPolicy {
 }
 async fn purge(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResponse, ApiError> {
     let ctx = auth::context(&state, &req, true, 2).await?;
-    Ok(ok(state.db(move|c|{let policy=diesel::sql_query("SELECT jsonb_build_object('retention_days',retention_days) AS data FROM organizations WHERE id=$1").bind::<SqlUuid,_>(ctx.organization_id).get_result::<RetentionPolicy>(c)?;let job=persistence::enqueue(c,ctx.organization_id,"retention",None,&format!("retention:{}:{}",ctx.organization_id,Utc::now().format("%Y-%m-%dT%H")),policy.data)?;settings::audit(c,&ctx,"retention.requested",Some(job.id),json!({}))?;Ok(json!({"job_id":job.id}))}).await?))
+    Ok(ok(state.db(move|c|{let policy=diesel::sql_query("SELECT jsonb_build_object('retention_days',retention_days)||data AS data FROM organizations WHERE id=$1").bind::<SqlUuid,_>(ctx.organization_id).get_result::<RetentionPolicy>(c)?;if policy.data["retention_enabled"]!=true{return Err(ApiError::bad("Автоудаление выключено в настройках компании"));}let job=persistence::enqueue(c,ctx.organization_id,"retention",None,&format!("retention:{}:{}",ctx.organization_id,Utc::now().format("%Y-%m-%dT%H")),policy.data)?;settings::audit(c,&ctx,"retention.requested",Some(job.id),json!({}))?;Ok(json!({"job_id":job.id}))}).await?))
 }
 async fn integrations(
     state: web::Data<AppState>,

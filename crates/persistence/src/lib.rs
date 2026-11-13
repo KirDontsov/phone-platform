@@ -318,7 +318,8 @@ pub fn claim_job(
             AND provider.data->'next_request_at' <= to_jsonb(9223372036854775807::bigint)
             AND provider.data->'next_request_at' > to_jsonb(floor(extract(epoch FROM now()))::bigint)
           ))
-          ORDER BY CASE kind WHEN 'purge' THEN 0 WHEN 'retention' THEN 0 WHEN 'sync' THEN 1 ELSE 2 END,
+          ORDER BY CASE WHEN kind IN ('purge','retention') THEN 0 WHEN kind='sync' THEN 1
+            WHEN kind='recording' AND payload->>'recovery_manifest_hash' ~ '^[a-f0-9]{64}$' THEN 2 ELSE 3 END,
             next_attempt_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1
         ) UPDATE jobs j SET state='running',attempts=j.attempts+1,lease_owner=$1,
           lease_until=now()+make_interval(secs=>$3),fencing=j.fencing+1,updated_at=now()

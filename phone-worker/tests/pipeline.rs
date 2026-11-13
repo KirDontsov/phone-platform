@@ -806,3 +806,259 @@ async fn phase20_ready_state_recording_never_contacts_provider_or_loses_cached_p
     assert!(preserved, "cached path/readiness must survive retry");
     assert!(directory.path().join(relative).is_file());
 }
+
+fn phase20_retention_policy(
+    conn: &mut persistence::PgConnection,
+    org: Uuid,
+    enabled: serde_json::Value,
+    days: i32,
+) {
+    diesel::sql_query("UPDATE organizations SET data=$2,retention_days=$3 WHERE id=$1")
+        .bind::<SqlUuid, _>(org)
+        .bind::<diesel::sql_types::Jsonb, _>(if enabled.is_null() {
+            json!({})
+        } else {
+            json!({"retention_enabled":enabled})
+        })
+        .bind::<diesel::sql_types::Integer, _>(days)
+        .execute(conn)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn phase20_retention_is_default_off_and_uses_only_live_policy() {
+    let _serial = PG_TEST_LOCK.lock().unwrap();
+    for (enabled, days, stale_days, expected) in [
+        (json!(null), 90, 1, false),
+        (json!(false), 90, 1, false),
+        (json!("true"), 90, 1, false),
+        (json!(true), 365, 1, false),
+        (json!(true), 90, 3650, true),
+    ] {
+        let Some((worker, _directory, org)) = review_worker(false) else {
+            return;
+        };
+        let call = Uuid::new_v4();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        phase20_retention_policy(&mut conn, org, enabled, days);
+        persistence::save_document(&mut conn,org,call,"call",None,json!({"provider_id":"synthetic-retention","started_at":Utc::now()-chrono::Duration::days(200),"note":"keep existing data"}),None).unwrap();
+        persistence::enqueue(
+            &mut conn,
+            org,
+            "retention",
+            None,
+            "phase20-retention",
+            json!({"retention_days":stale_days}),
+        )
+        .unwrap();
+        drop(conn);
+        worker.run_once().await.unwrap();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        let doc = persistence::get_document(&mut conn, org, call)
+            .unwrap()
+            .unwrap();
+        let queued = persistence::list_jobs(&mut conn, org, 20)
+            .unwrap()
+            .iter()
+            .filter(|j| j.kind == "purge")
+            .count();
+        diesel::sql_query("DELETE FROM organizations WHERE id=$1")
+            .bind::<SqlUuid, _>(org)
+            .execute(&mut conn)
+            .unwrap();
+        assert_eq!(
+            doc.data["deleted"] == true,
+            expected,
+            "only explicit live enabled/day policy permits retention"
+        );
+        assert_eq!(queued, usize::from(expected));
+        assert_eq!(doc.data["note"], "keep existing data");
+    }
+}
+
+#[tokio::test]
+async fn phase20_queued_retention_purge_rechecks_live_consent_days_and_safe_restore_guards() {
+    let _serial = PG_TEST_LOCK.lock().unwrap();
+    for mode in [
+        "disabled",
+        "extended_days",
+        "manual_audit",
+        "manual_event",
+        "manual_job",
+        "already_purged",
+        "partial",
+        "tombstone",
+    ] {
+        let Some((worker, directory, org)) = review_worker(false) else {
+            return;
+        };
+        let call = Uuid::new_v4();
+        let rec = Uuid::new_v4();
+        let relative = format!("{org}/synthetic-retention.wav");
+        std::fs::create_dir(directory.path().join(org.to_string())).unwrap();
+        std::fs::write(
+            directory.path().join(&relative),
+            b"synthetic preserved recording",
+        )
+        .unwrap();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        phase20_retention_policy(&mut conn, org, json!(true), 90);
+        let mut data = json!({"deleted":true,"provider_id":"synthetic-retention","started_at":Utc::now()-chrono::Duration::days(200),"note":"preserve me"});
+        if mode == "already_purged" {
+            data = json!({"deleted":true,"purged":true});
+        }
+        if mode == "partial" {
+            data = json!({"deleted":true});
+        }
+        persistence::save_document(&mut conn, org, call, "call", None, data.clone(), None).unwrap();
+        persistence::save_document(
+            &mut conn,
+            org,
+            rec,
+            "recording",
+            Some(call),
+            json!({"ready":true,"state":"ready","path":relative}),
+            None,
+        )
+        .unwrap();
+        persistence::enqueue(
+            &mut conn,
+            org,
+            "purge",
+            Some(call),
+            "retention:synthetic-pending",
+            json!({}),
+        )
+        .unwrap();
+        if mode == "manual_audit" {
+            persistence::save_document(
+                &mut conn,
+                org,
+                Uuid::new_v4(),
+                "audit",
+                None,
+                json!({"action":"call.deleted","subject_id":call}),
+                None,
+            )
+            .unwrap();
+        }
+        if mode == "manual_event" {
+            persistence::append_audit(&mut conn, org, None, "call.deleted", Some(call), json!({}))
+                .unwrap();
+        }
+        if mode == "manual_job" {
+            persistence::enqueue(
+                &mut conn,
+                org,
+                "purge",
+                Some(call),
+                "purge:manual",
+                json!({}),
+            )
+            .unwrap();
+        }
+        if mode == "tombstone" {
+            persistence::tombstone(&mut conn, org, call, Some("synthetic-retention")).unwrap();
+        }
+        phase20_retention_policy(
+            &mut conn,
+            org,
+            json!(mode == "extended_days"),
+            if mode == "extended_days" { 365 } else { 90 },
+        );
+        drop(conn);
+        worker.run_once().await.unwrap();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        let after = persistence::get_document(&mut conn, org, call)
+            .unwrap()
+            .unwrap();
+        let child = persistence::get_document(&mut conn, org, rec).unwrap();
+        let file_preserved = directory.path().join(&relative).is_file();
+        diesel::sql_query("DELETE FROM organizations WHERE id=$1")
+            .bind::<SqlUuid, _>(org)
+            .execute(&mut conn)
+            .unwrap();
+        assert!(
+            file_preserved,
+            "retention job must not unlink media after consent/policy changes: {mode}"
+        );
+        assert!(
+            child.is_some(),
+            "recording metadata must survive canceled retention: {mode}"
+        );
+        if ["disabled", "extended_days"].contains(&mode) {
+            assert_ne!(
+                after.data["deleted"], true,
+                "safe retention soft-delete must be undone: {mode}"
+            );
+            assert_eq!(after.data["note"], "preserve me");
+        } else {
+            assert_eq!(
+                after.data, data,
+                "manual/partial/purged/tombstoned call must not be revived: {mode}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn phase20_explicit_retention_and_manual_purge_still_delete_intended_data() {
+    let _serial = PG_TEST_LOCK.lock().unwrap();
+    for manual in [false, true] {
+        let Some((worker, directory, org)) = review_worker(false) else {
+            return;
+        };
+        let call = Uuid::new_v4();
+        let rec = Uuid::new_v4();
+        let relative = format!("{org}/synthetic-delete.wav");
+        std::fs::create_dir(directory.path().join(org.to_string())).unwrap();
+        std::fs::write(
+            directory.path().join(&relative),
+            b"synthetic intended deletion",
+        )
+        .unwrap();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        phase20_retention_policy(&mut conn, org, json!(!manual), 90);
+        persistence::save_document(&mut conn,org,call,"call",None,json!({"deleted":true,"provider_id":"synthetic","started_at":Utc::now()-chrono::Duration::days(200)}),None).unwrap();
+        persistence::save_document(
+            &mut conn,
+            org,
+            rec,
+            "recording",
+            Some(call),
+            json!({"ready":true,"path":relative}),
+            None,
+        )
+        .unwrap();
+        persistence::enqueue(
+            &mut conn,
+            org,
+            "purge",
+            Some(call),
+            if manual {
+                "purge:manual-confirmed"
+            } else {
+                "retention:explicit-confirmed"
+            },
+            json!({}),
+        )
+        .unwrap();
+        drop(conn);
+        worker.run_once().await.unwrap();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        let after = persistence::get_document(&mut conn, org, call)
+            .unwrap()
+            .unwrap();
+        let child = persistence::get_document(&mut conn, org, rec).unwrap();
+        let exists = directory.path().join(relative).exists();
+        let tombstone = persistence::is_tombstoned(&mut conn, org, call, None).unwrap();
+        diesel::sql_query("DELETE FROM organizations WHERE id=$1")
+            .bind::<SqlUuid, _>(org)
+            .execute(&mut conn)
+            .unwrap();
+        assert!(after.data["purged"] == true);
+        assert!(child.is_none());
+        assert!(!exists);
+        assert!(tombstone);
+    }
+}

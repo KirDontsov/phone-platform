@@ -27,3 +27,7 @@
 Исполнитель удалил RED copy/отдельную RED БД и очистил только собственные package artifacts. Независимый последовательный повтор current worktree: persistence **4/4 PASS**, worker lib **20/20 PASS**, pipeline actualPG **8/8 PASS**, provider **16/16 PASS**, model HTTP fixtures **13/13 PASS**. Все 61 проверки реально выполнены, ignored/skipped=0. В current binary правильное имя `pipeline::media_tests::phase20_cached_backoff_does_not_renew_deadline_or_downgrade_ready_media`, test PASS. Заражение shared target устранено; source не менялся для RED.
 
 Статус: **PASS**. Root OAuth/UI review находится отдельно в20-ROOT-REVIEW.md. Production verifier выполнит readonly после release; он не заменяет real provider quota/RouterAI user consent. Reviewer RED мутации самостоятельно не запускал; их evidence предоставляет исполнитель.
+
+## Live verifier дополнение — revision1 требуется
+
+После первого release независимый verifier выявил блокирующий конфликт существующего90day event-age retention с историческим импортом: новый control priority ускорил неявное удаление. Первичный review PASS относится только к узким queue/callback invariants и **не закрывает финальный release gate**. Требуются R1 opt-in/live policy guard/bulk recovery, новый implementation review и повтор production verification. Последствия и evidence зафиксированы20-VERIFICATION.md; worker paused, automatic recovery уже purged данных не разрешён.

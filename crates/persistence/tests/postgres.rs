@@ -277,6 +277,8 @@ fn phase20_cooldown_skips_jobs_without_attempts_and_preserves_tenant_and_expired
     .unwrap();
     let sync = phase20_job(&mut conn, blocked, "sync", 4);
     let recording = phase20_job(&mut conn, blocked, "recording", 4);
+    diesel::sql_query("UPDATE jobs SET payload=jsonb_build_object('recovery_manifest_hash',repeat('a',64)) WHERE id=$1")
+        .bind::<SqlUuid, _>(recording.id).execute(&mut conn).unwrap();
     diesel::sql_query("UPDATE jobs SET state='running',attempts=1,fencing=1,lease_owner='crashed',lease_until=now()-interval '1 minute' WHERE id=$1")
         .bind::<SqlUuid,_>(recording.id).execute(&mut conn).unwrap();
     let allowed = phase20_job(&mut conn, foreign, "recording", 1);
@@ -346,6 +348,15 @@ fn phase20_control_and_history_are_not_starved_by_recording_backlog() {
     let mut conn = phase20_connection();
     let org = phase20_org(&mut conn);
     let recording = phase20_job(&mut conn, org, "recording", 4);
+    let recovered = phase20_job(&mut conn, org, "recording", 0);
+    diesel::sql_query("UPDATE jobs SET payload=jsonb_build_object('recovery_manifest_hash',repeat('a',64)) WHERE id=$1")
+        .bind::<SqlUuid, _>(recovered.id).execute(&mut conn).unwrap();
+    let invalid_recovery = phase20_job(&mut conn, org, "recording", 0);
+    diesel::sql_query("UPDATE jobs SET payload=jsonb_build_object('recovery_manifest_hash','invalid') WHERE id=$1")
+        .bind::<SqlUuid, _>(invalid_recovery.id).execute(&mut conn).unwrap();
+    let future_recovery = phase20_job(&mut conn, org, "recording", -1);
+    diesel::sql_query("UPDATE jobs SET payload=jsonb_build_object('recovery_manifest_hash',repeat('a',64)) WHERE id=$1")
+        .bind::<SqlUuid, _>(future_recovery.id).execute(&mut conn).unwrap();
     let sync = phase20_job(&mut conn, org, "sync", 2);
     let purge = phase20_job(&mut conn, org, "purge", 1);
     let retention = phase20_job(&mut conn, org, "retention", 0);
@@ -361,7 +372,7 @@ fn phase20_control_and_history_are_not_starved_by_recording_backlog() {
         "purge".into(),
         "retention".into(),
     ];
-    for expected in [purge.id, retention.id, sync.id, recording.id] {
+    for expected in [purge.id, retention.id, sync.id, recovered.id, recording.id, invalid_recovery.id] {
         let job = claim_job(&mut conn, "phase20", &kinds, 30)
             .unwrap()
             .unwrap();

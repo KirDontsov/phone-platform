@@ -22,3 +22,15 @@
 PLAN-CHECK относится только к качеству плана. Реализация, release и actual user consent здесь не проверены.
 
 Уточнение исполнителя учтено: callback ошибки сохраняют HTTP400/409/410 и readable HTML с немедленным meta Refresh на фиксированный allowlisted `/problem/<status>`; чужой Host не перенаправляется, ответ не отражает query. Success остаётся303 `/connected`. Consent default600s и success grace60s ограничены и подходят плану. Проверять HTTP тело/meta target, clean page и отсутствие параметров; окончательная ошибка exchange должна оставаться видимой на странице результата.
+
+## Revision1 — live retention incident
+
+**План revision1 PASS, 1/3. Финальный release/UAT gate BLOCKED до реализации и проверки R1.**
+
+Первичная автоматическая проверка не выявила конфликт существующего retention(default90days по started_at) с импортом исторических звонков. После первого выпуска приоритет purge ускорил существующее неявное удаление: 24648 звонков помечены deleted,120 уже purged,24528 ещё целы. Единственный worker остановлен root через pause. Эти последствия требуют исправления и отдельного доказательства восстановления, а не только прежнего green suite.
+
+R1 добавляет явный owner opt-in `organization.data.retention_enabled=true`, default=false, типизированный API/UI с понятным предупреждением о возрасте звонка и историческом импорте. Семантика started_at не меняется скрытно. Retention и каждый retention-origin purge проверяют LIVE enabled/currentdays перед unlink; ручной purge сохраняется. Неистёкший/disabled retention-origin job может снять только soft-delete, если нет purged/tombstone/manual audit/manual purge proof.
+
+Устранён blocker revision: до resume выполняется scoped bulk reconcile всех доказанных pending retention deletions одной guarded transaction с private snapshot/manifest/receipt и dry-run/idempotence actualPG. Иначе24528 no-op purges заняли бы часы, сохраняя скрытую историю и starvation sync. Cancel только queued/retry retention-origin jobs без active lease, restore только целые softdeleted calls той же компании без ручных удалений/тombstone/purged. Уже purged120 не восстанавливаются из пустого placeholder; их bounded source recovery требует реальных данных и отдельного gate.
+
+Проверки R1 обязательны: defaultoff/fresh historical import сохраняет записи, expliciton по текущему age работает, выключение/изменение days после постановки блокирует unlink, manualdelete/tombstone сохраняются, malformed policy не включает очистку, bulk reconcile точно scoped и идемпотентен. Перед resume безопасный новый образ, независимый review и readonly production verifier. План structure повторно valid=true,4tasks,errors/warnings=[]; provider requests operator не выполняет до отдельного scope.

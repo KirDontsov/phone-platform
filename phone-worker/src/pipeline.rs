@@ -1408,6 +1408,13 @@ impl Worker {
             .filter(|d| d.parent_id != Some(call_id))
             .filter_map(|d| d.data["path"].as_str().map(str::to_owned))
             .collect::<std::collections::HashSet<_>>();
+        if job.dedup_key.starts_with("retention:")
+            && !self
+                .guarded(job, move |conn| retention_purge_allowed(conn, org, call_id))
+                .await?
+        {
+            return Ok(());
+        }
         for doc in children.iter().filter(|d| d.kind == "recording") {
             if let Some(relative) = doc.data["path"].as_str() {
                 // Synthetic seed and legacy imports can share a physical file. Removing one
@@ -1439,11 +1446,9 @@ impl Worker {
     async fn retention(&self, job: &Job) -> Result<()> {
         let org = job.organization_id;
         let job_id = job.id;
-        let days = job.payload["retention_days"]
-            .as_i64()
-            .unwrap_or(90)
-            .clamp(1, 3650);
-        let before = Utc::now() - chrono::Duration::days(days);
+        if self.db(move |conn| live_retention_days(conn, org)).await?.is_none() {
+            return Ok(());
+        }
         let references = self
             .documents(org, "recording")
             .await?
@@ -1457,17 +1462,20 @@ impl Worker {
         .await
         .map_err(|_| ProviderError::retry("media_cleanup_failed", 60))??;
         self.final_write(job, move |conn| {
+            let Some(days) = live_retention_days(conn, org)? else {
+                return Ok(());
+            };
+            let before = Utc::now() - chrono::Duration::days(days);
             let calls = persistence::list_documents(conn, org, "call")?;
             for mut call in calls {
                 if call.data["deleted"] == true {
                     continue;
                 }
-                if call.data["started_at"]
-                    .as_str()
-                    .and_then(|s| providers::parse_utc(s).ok())
-                    .is_some_and(|t| t < before)
+                if retention_call_started_at(&call.data).is_some_and(|t| t < before)
                 {
                     call.data["deleted"] = json!(true);
+                    call.data["deletion_origin"] = json!("retention");
+                    call.data["retention_job_id"] = json!(job_id);
                     persistence::save_document(
                         conn,
                         org,
@@ -2060,6 +2068,84 @@ pub fn normalize_phone(raw: &str) -> String {
     }
 }
 
+fn live_retention_days(conn: &mut persistence::PgConnection, org: Uuid) -> Result<Option<i64>> {
+    #[derive(diesel::QueryableByName)]
+    struct Policy {
+        #[diesel(sql_type = Integer)]
+        retention_days: i32,
+        #[diesel(sql_type = diesel::sql_types::Jsonb)]
+        data: Value,
+    }
+    let policy =
+        diesel::sql_query("SELECT retention_days,data FROM organizations WHERE id=$1 FOR SHARE")
+            .bind::<SqlUuid, _>(org)
+            .get_result::<Policy>(conn)?;
+    Ok((policy.data["retention_enabled"] == true).then_some(i64::from(policy.retention_days)))
+}
+
+fn retention_call_started_at(data: &Value) -> Option<DateTime<Utc>> {
+    // Redacted/partial tombstones are not complete historical calls to revive or expire.
+    data["provider_id"]
+        .as_str()
+        .filter(|id| !id.trim().is_empty())?;
+    providers::parse_utc(data["started_at"].as_str()?).ok()
+}
+
+fn retention_purge_allowed(
+    conn: &mut persistence::PgConnection,
+    org: Uuid,
+    call_id: Uuid,
+) -> Result<bool> {
+    let days = live_retention_days(conn, org)?;
+    let Some(mut call) = persistence::get_document(conn, org, call_id)? else {
+        return Ok(false);
+    };
+    if call.kind != "call" || call.data["deleted"] != true || call.data["purged"] == true {
+        return Ok(false);
+    }
+    if persistence::is_tombstoned(conn, org, call_id, call.data["provider_id"].as_str())? {
+        return Ok(false);
+    }
+    let Some(started_at) = retention_call_started_at(&call.data) else {
+        return Ok(false);
+    };
+    if days.is_some_and(|days| started_at < Utc::now() - chrono::Duration::days(days)) {
+        return Ok(true);
+    }
+    #[derive(diesel::QueryableByName)]
+    struct ManualIntent {
+        #[diesel(sql_type = diesel::sql_types::Bool)]
+        found: bool,
+    }
+    let manual = diesel::sql_query(
+        "SELECT (EXISTS(SELECT 1 FROM documents WHERE organization_id=$1 AND kind='audit'
+            AND data->>'subject_id'=$2::text
+            AND (data->>'action'='call.deleted' OR data->>'event'='call.deleted'))
+         OR EXISTS(SELECT 1 FROM jobs WHERE organization_id=$1 AND subject_id=$2
+            AND kind='purge' AND dedup_key NOT LIKE 'retention:%')) AS found",
+    )
+    .bind::<SqlUuid, _>(org)
+    .bind::<SqlUuid, _>(call_id)
+    .get_result::<ManualIntent>(conn)?;
+    if !manual.found {
+        let data = call.data.as_object_mut().unwrap();
+        data.remove("deleted");
+        if data.get("deletion_origin") == Some(&json!("retention")) {
+            data.remove("deletion_origin");
+            data.remove("retention_job_id");
+        }
+        persistence::save_document(
+            conn,
+            org,
+            call.id,
+            "call",
+            call.parent_id,
+            call.data,
+            Some(call.version),
+        )?;
+    }
+    Ok(false)
+}
 fn recording_ready(data: &Value) -> bool {
     data["ready"] == true || data["state"] == "ready"
 }
@@ -2698,4 +2784,9 @@ mod media_tests {
         let result = analysis_taxonomy(vec![active, archived]);
         assert_eq!(result, vec![json!({"id":id,"name":"Запрос стоимости"})]);
     }
+}
+
+/// Operator recovery calls this only after exact manifest/tombstone/manual-deletion guards.
+pub(crate) fn import_retention_recovery_source(conn: &mut persistence::PgConnection, org: Uuid, connection: Uuid, job: Uuid, source: &Value, config: &Value) -> Result<()> {
+    import_call(conn, org, connection, job, source, false, config)
 }

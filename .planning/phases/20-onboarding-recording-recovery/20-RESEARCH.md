@@ -11,3 +11,7 @@
 - БД/schema/tenant/auth остаются прежними. Не форсировать retry, не сбрасывать attempts/quota, не вызывать реальные платные модели.
 
 Дополнительная независимая Telphin диагностика: 20-TELPHIN-RESEARCH.md.
+
+## Release finding / revision1
+
+После активации 15-5f633b8 verifier обнаружил уменьшение recordings/ready: существующий retention(default90days) использует возраст звонка started_at, помечает historical calls deleted и ставит purge. Новый приоритет controljobs ускорил эти удаления; исходный sync остался за purge backlog. В09:03UTC root приостановил единственный собственный worker. Это blocker, предыдущая активация не считается успешной финальной проверкой. Требуется explicit owner opt-in автоудаления, live recheck каждого retention purge, безопасное снятие только retention soft-deletion без отмены ручных удалений, инвентаризация уже purged данных и реальных источников восстановления. Нельзя писать «все файлы на месте» после этого finding без новой проверки и разграничения retention.

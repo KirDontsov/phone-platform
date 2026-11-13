@@ -1,0 +1,26 @@
+# Phase20: source recovery research
+
+Дата: 2026-11-13. Область — read-only исследование; authenticated API Телфина не вызывался, production/data не менялись.
+
+## Подтверждённый endpoint
+
+Официальная документация Телфина описывает **GET `/api/ver1.0/client/{client_id}/call_history/{call_uuid}`**: один вызов с CDR по уникальному идентификатору. Необязательный `call_month` формата `yyyy-mm` ускоряет ответ. Возвращаются поля звонка и CDR, в том числе идентификаторы записей. Источник: [История вызовов](https://ringme-confluence.atlassian.net/wiki/spaces/Ringme/pages/1901921310/call_history); официальный [Telphin API](https://m.account.telphin.ru/subscribers/documentation-rest-api) указывает основной API host `apiproxy.telphin.ru`. Батч-фильтр списка по произвольному массиву call_uuid в этой документации не указан. Поэтому для 120 известных UUID подходит ограниченный последовательный запрос каждого вызова, без повторного полного импорта. Доступность конкретных исторических UUID и аудио не проверялась.
+
+## Репозиторий и ограничения восстановления
+
+- `deletion_tombstones` сохраняет organization_id/subject_id/provider_id/deleted_at; provider_id — исходный Telphin call_uuid. Приватный `data/eval/phase20-retention-targets.json` уже содержит 24648 targets и признаки purged/manual/tombstone; значения не выводились, изучена только схема JSON. Файл0600.
+- `import_call` в `phone-worker/src/pipeline.rs` строит детерминированный id = UUIDv5(org, `telphin:<connection>:<provider>`), но немедленно пропускает tombstone. `save_document` отдельно запрещает запись поверх subject/provider tombstone. Просто снять `deleted` у redacted call недостаточно.
+- `purge` удаляет дочерние `leg`, `recording`, `source_snapshot`, транскрипты/анализы и локальные файлы; call оставляет redacted. Sync-run хранит только checkpoint/hash, а не полные страницы. Предыдущий production backup существовал до создания affected company, поэтому не содержит этих 120 звонков.
+- Получение исходного звонка позволяет восстановить фактические поля телефонии и новые CDR/recording references. Оно не восстанавливает удалённые ручные комментарии, статусы, версии анализов и транскрипты. Их отсутствие нельзя заменять выдуманными данными. Проверить существующий аудит перед объявлением полноты восстановления.
+- `Telphin::connect` использует собственный AES-256-GCM sealed config, `client_credentials`, затем `/user/` scope/client verification. Для одноразового runner лучше использовать существующие Rust contracts/provider, а не печатать/переносить ключи через shell/argv. `get` сейчас private, single-call method отсутствует; потребуется узкий метод с строгой проверкой UUID и response identity/owner/CDR.
+
+## Рекомендуемый ограниченный repair
+
+1. Сначала сохранить paused PG snapshot и immutable0600 manifest с точным scope affected organization/connection/120purged IDs, provider_id, tombstone identity/deleted_at, retention-origin succeeded purge job. Исключить любые ручные call.deleted audit/manual purge jobs и не совпадающие tombstone records. Не отменять ручные удаления.
+2. Fetch-only стадия: только эти120 UUID; фиксированный HTTPS endpoint/host, existing own runtime config, проверенные client_id/UUID/CDR owners. Сохранить реальные provider JSON в private0600 staging, не обычные логи/Git. Один worker последовательных запросов с небольшой паузой; перед connect и каждым запросом читать live connection next_request_at. Future cooldown => завершить как pending, без сетевого запроса.
+3. На свежем429 обновить тот же org connection deadline максимумом старого и provider Retry-After, остановить весь fetch-проход. Не сбрасывать глобальную паузу и не делать fallback запрос на резервный host ради обхода quota. 401 — только существующая bounded reauthorization; никаких бесконечных retry. Неполный fetch/404 не выдавать за успешное восстановление.
+4. После проверки реальных payload выполнять по одному короткому guarded transaction: заново проверить org/call/version/tombstone/retention-origin/manual exclusions; удалить только exact erroneous retention tombstone, удалить redacted call (или заменить целиком из проверенного источника), вызвать общий нормализатор `import_call` и appendaudit `retention.recovered`. Любая ошибка откатывает tombstone removal. Не убирать все tombstones организации и не сбрасывать original sync checkpoint.
+5. Новый source-import idempotent; запись получает фактические поля и pending audio references. Для аудио — обычная очередь с quota/tenant guards. Старый dedup `recording:<id>` мог быть удалён вместе с subject recording FK или сохранён; проверить существование: completed job не должен блокировать повторное скачивание реально удалённого файла. Нужен recovery-specific dedup при необходимости, а не сброс чужих completed jobs.
+6. Итоговый receipt только с aggregate counts: источников получено/metadata restored/audio ready/pending/missing provider/manual exclusions. Реальный ASR не запускать автоматически. Повторный recovery должен стать no-op. Полную историю и восстановление ручных данных заявлять только по фактическим источникам.
+
+Операторский authenticated fetch/DB repair этим исследованием не выполнялся. Сам endpoint и кодовая возможность подтверждены; фактическая сохранность у Телфина остаётся внешней проверкой.

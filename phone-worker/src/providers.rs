@@ -303,6 +303,18 @@ impl Telphin {
         validate_history(&data, &client_id, start, end, page)?;
         Ok(data)
     }
+    /// Operator recovery uses the exact known call UUID, never an unbounded re-import.
+    pub async fn single_call(&mut self, call_uuid: &str) -> Result<Value> {
+        if !valid_call_uuid(call_uuid) {
+            return Err(ProviderError::permanent("invalid_call_uuid"));
+        }
+        let client_id = numeric_id(self.config.get("client_id"))?;
+        let data = self
+            .get(&format!("client/{client_id}/call_history/{call_uuid}"), &[])
+            .await?;
+        validate_single_call(&data, &client_id, call_uuid)?;
+        Ok(data)
+    }
     pub async fn recording(&mut self, id: &str) -> Result<(Vec<u8>, String)> {
         let client_id = numeric_id(self.config.get("client_id"))?;
         if id.len() > 128 || !id.chars().all(|v| v.is_ascii_alphanumeric() || v == '-') {
@@ -388,6 +400,26 @@ pub fn numeric_id(value: Option<&Value>) -> Result<String> {
         return Err(ProviderError::permanent("invalid_client_id"));
     }
     Ok(raw)
+}
+pub fn valid_call_uuid(value: &str) -> bool {
+    matches!(value.len(), 32 | 36)
+        && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+        && uuid::Uuid::parse_str(value).is_ok()
+}
+pub fn validate_single_call(data: &Value, client_id: &str, call_uuid: &str) -> Result<()> {
+    if !valid_call_uuid(call_uuid) || data["call_uuid"].as_str() != Some(call_uuid) {
+        return Err(ProviderError::permanent(
+            "recovery_source_identity_mismatch",
+        ));
+    }
+    let at = parse_utc(required(data, "init_time_gmt")?)?;
+    validate_history(
+        &json!({"page":1,"per_page":1,"order":"asc","call_history":[data]}),
+        client_id,
+        at,
+        at,
+        1,
+    )
 }
 pub fn validate_history(
     data: &Value,
@@ -877,5 +909,55 @@ mod client_id_tests {
             resolve_telphin_config(&input).await.unwrap_err().code,
             "provider_url_not_allowed"
         );
+    }
+}
+
+#[cfg(test)]
+mod retention_single_call_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    #[tokio::test]
+    async fn single_call_uses_exact_scoped_path_and_rejects_untrusted_identity() {
+        let id = "11111111111141118111111111111111";
+        let source = json!({"call_uuid":id,"client_owner_id":42,"init_time_gmt":"2026-02-01 00:00:00","cdr":[{"client_owner_id":42,"record_uuid":null}]});
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let reply = source.clone();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 8192];
+            let n = stream.read(&mut buffer).await.unwrap();
+            let request = String::from_utf8_lossy(&buffer[..n]);
+            assert!(request.starts_with("GET /api/ver1.0/client/42/call_history/11111111111141118111111111111111 HTTP/1.1\r\n"));
+            assert!(request
+                .to_lowercase()
+                .contains("authorization: bearer synthetic"));
+            let body = serde_json::to_vec(&reply).unwrap();
+            let header=format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len());
+            stream.write_all(header.as_bytes()).await.unwrap();
+            stream.write_all(&body).await.unwrap();
+        });
+        let mut provider = Telphin {
+            client: http_client().unwrap(),
+            config: json!({"client_id":"42"}),
+            host,
+            token: "synthetic".into(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+        };
+        assert_eq!(
+            provider.single_call("../../other").await.unwrap_err().code,
+            "invalid_call_uuid"
+        );
+        assert_eq!(provider.single_call(id).await.unwrap(), source);
+        server.await.unwrap();
+        let mut wrong = source.clone();
+        wrong["call_uuid"] = json!("22222222222242228222222222222222");
+        assert!(validate_single_call(&wrong, "42", id).is_err());
+        wrong = source.clone();
+        wrong["client_owner_id"] = json!(43);
+        assert!(validate_single_call(&wrong, "42", id).is_err());
+        wrong = source.clone();
+        wrong["cdr"][0]["client_owner_id"] = json!(43);
+        assert!(validate_single_call(&wrong, "42", id).is_err());
     }
 }

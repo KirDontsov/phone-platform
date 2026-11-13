@@ -2,7 +2,7 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_20_implementation_verified_release_pending
+status: phase_20_r1_recovery_release_pending
 stopped_at: Phase20 callback result and Telphin cooldown queue fixes tested; release pending; real RouterAI consent pending; phase12 paused
 last_updated: "2026-11-13"
 progress:
@@ -19,6 +19,8 @@ progress:
 # Project State
 
 ## Текущее состояние — фаза20
+
+Release verifier обнаружил конфликт: прежний default90days retention по возрасту звонка под новым приоритетом очистил120calls и скрыл24528. Ownworker остановлен до R1. Приватный manifest и дополнительный PGsnapshot сохранены; guarded bulk repair вернул24528и отменил24528retention-onlypurges, manual/tombstonesexcluded. R1 explicitretention_enabled(defaultfalse) + livepurgeguard/API/UI implemented; API2/worker63/UI100/typebuild и batchactualPG PASS, ключевыеRED подтверждены. 120реальныеsourcemetadata/audio recovery CLI проходит отдельный gate; источник/восстановление ещёpending, не объявлять данные полными.
 
 RouterAI пока не подключён: собственный helper истёк, ключ в runtime не сохранён; причина пустой страницы у провайдера не доказана. Исправлена собственная callback-страница: понятные ошибки, чистый URL, terminal expiry, ожидание600с/результат60с. Python14/14, новые3+timeout RED, настоящий Chrome synthetic callback/metaRefresh/mobile PASS. Телфин: 5187 ready файлов на месте, 28746 recording ждут quota; найдено вытеснение sync массовыми retry. Claim теперь учитывает cooldown своей компании до попытки, даёт due sync/retention/purge приоритет; cached backoff не продлевает quota, ready/path сохраняются, успешный download очищает last_error. ActualPG/worker и UI98/type/build PASS, independent plan-check0/reviews PASS. Выпуск и verifier ожидаются; реальный consent, завершение истории и humanUAT pending. Phase12/stash сохранены.
 
