@@ -240,8 +240,7 @@ impl Worker {
                 .as_i64()
                 .filter(|v| *v > Utc::now().timestamp())
             {
-                return Err(ProviderError::retry(
-                    "provider_rate_limited",
+                return Err(ProviderError::cached_rate_limit(
                     (next - Utc::now().timestamp()).max(1) as u64,
                 ));
             }
@@ -411,6 +410,7 @@ impl Worker {
         let kind = job.kind.clone();
         let code = error.code.clone();
         let retry = error.retryable;
+        let observed_rate_limit = error.code == "provider_rate_limited" && !error.cached_backoff;
         let delay = error.retry_after_seconds.unwrap_or(60).min(86400) as i64;
         let provider_kind = match job.kind.as_str() {
             "sync" | "recording" => "telphin",
@@ -443,7 +443,7 @@ impl Worker {
                             doc.data,
                             Some(doc.version),
                         )?;
-                    } else if doc.kind == "recording" {
+                    } else if doc.kind == "recording" && !recording_ready(&doc.data) {
                         doc.data["state"] = json!(if retry { "pending" } else { "failed" });
                         doc.data["last_error"] = json!(code);
                         persistence::save_document(
@@ -488,12 +488,14 @@ impl Worker {
                     )?;
                 }
             }
-            if code == "provider_rate_limited" && !provider_kind.is_empty() {
+            if observed_rate_limit && !provider_kind.is_empty() {
                 if let Some(mut provider) = persistence::list_documents(conn, org, "connection")?
                     .into_iter()
                     .find(|d| d.data["kind"] == provider_kind)
                 {
-                    provider.data["next_request_at"] = json!(Utc::now().timestamp() + delay);
+                    let deadline = (Utc::now().timestamp() + delay)
+                        .max(provider.data["next_request_at"].as_i64().unwrap_or(0));
+                    provider.data["next_request_at"] = json!(deadline);
                     provider.data["last_error"] = json!(code);
                     persistence::save_document(
                         conn,
@@ -783,7 +785,7 @@ impl Worker {
             .parent_id
             .ok_or_else(|| ProviderError::permanent("invalid_recording_reference"))?;
         let _ = self.document(org, call_id, "call").await?;
-        if recording.data["ready"] == true {
+        if recording_ready(&recording.data) {
             return Ok(());
         }
         let (_, config) = self.connection_config(org, "telphin").await?;
@@ -827,6 +829,7 @@ impl Worker {
         data["sha256"] = json!(checksum);
         data["state"] = json!("ready");
         data["ready"] = json!(true);
+        data.as_object_mut().unwrap().remove("last_error");
         data["duration"] = json!(duration);
         self.final_write(job, move |conn| {
             let call = persistence::get_document(conn, org, call_id)?
@@ -2057,6 +2060,10 @@ pub fn normalize_phone(raw: &str) -> String {
     }
 }
 
+fn recording_ready(data: &Value) -> bool {
+    data["ready"] == true || data["state"] == "ready"
+}
+
 struct TokenLock {
     connection: persistence::Connection,
     key: i64,
@@ -2202,6 +2209,137 @@ impl Drop for MediaArtifact {
 #[cfg(test)]
 mod media_tests {
     use super::*;
+    #[tokio::test]
+    async fn phase20_cached_backoff_does_not_renew_deadline_or_downgrade_ready_media() {
+        let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+            eprintln!("SKIP Phase20 actual-PG regression: TEST_DATABASE_URL not configured");
+            return;
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let worker = Worker::new(WorkerConfig {
+            database_url,
+            encryption_key: [9; 32],
+            media_root: directory.path().into(),
+            demo_mode: false,
+            rabbitmq_url: None,
+            public_url: "http://localhost".into(),
+            poll_seconds: 1,
+        })
+        .unwrap();
+        let org = Uuid::new_v4();
+        let call = Uuid::new_v4();
+        let recording = Uuid::new_v4();
+        let connection = Uuid::new_v4();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        diesel::sql_query(
+            "INSERT INTO organizations(id,name) VALUES($1,'Phase20 synthetic worker')",
+        )
+        .bind::<SqlUuid, _>(org)
+        .execute(&mut conn)
+        .unwrap();
+        persistence::save_document(&mut conn, org, call, "call", None, json!({}), None).unwrap();
+        let media = json!({"ready":true,"state":"ready","path":format!("{org}/synthetic.wav")});
+        persistence::save_document(
+            &mut conn,
+            org,
+            recording,
+            "recording",
+            Some(call),
+            media.clone(),
+            None,
+        )
+        .unwrap();
+        persistence::save_document(
+            &mut conn,
+            org,
+            connection,
+            "connection",
+            None,
+            json!({"kind":"telphin","state":"configured"}),
+            None,
+        )
+        .unwrap();
+        persistence::enqueue(
+            &mut conn,
+            org,
+            "recording",
+            Some(recording),
+            "phase20-failure",
+            json!({}),
+        )
+        .unwrap();
+        let job = persistence::claim_job(&mut conn, &worker.worker_id, &["recording".into()], 300)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.organization_id, org);
+        let deadline = Utc::now().timestamp() + 3600;
+        let provider = persistence::get_document(&mut conn, org, connection)
+            .unwrap()
+            .unwrap();
+        persistence::save_document(
+            &mut conn,
+            org,
+            connection,
+            "connection",
+            None,
+            json!({"kind":"telphin","state":"configured","next_request_at":deadline}),
+            Some(provider.version),
+        )
+        .unwrap();
+        let before = persistence::get_document(&mut conn, org, connection)
+            .unwrap()
+            .unwrap();
+        drop(conn);
+        let cached = worker.connection_config(org, "telphin").await.unwrap_err();
+        worker.record_failure(&job, &cached).await.unwrap();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        let after_cached = persistence::get_document(&mut conn, org, connection)
+            .unwrap()
+            .unwrap();
+        drop(conn);
+        worker
+            .record_failure(&job, &ProviderError::retry("provider_rate_limited", 30))
+            .await
+            .unwrap();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        let after_short = persistence::get_document(&mut conn, org, connection)
+            .unwrap()
+            .unwrap();
+        drop(conn);
+        worker
+            .record_failure(&job, &ProviderError::retry("provider_rate_limited", 5000))
+            .await
+            .unwrap();
+        let mut conn = persistence::connection(&worker.pool).unwrap();
+        let after_long = persistence::get_document(&mut conn, org, connection)
+            .unwrap()
+            .unwrap();
+        let recording_after = persistence::get_document(&mut conn, org, recording)
+            .unwrap()
+            .unwrap();
+        diesel::sql_query("DELETE FROM organizations WHERE id=$1")
+            .bind::<SqlUuid, _>(org)
+            .execute(&mut conn)
+            .unwrap();
+        assert_eq!(
+            after_cached.version, before.version,
+            "cached cooldown must not rewrite provider metadata"
+        );
+        assert_eq!(after_cached.data, before.data);
+        assert_eq!(
+            after_short.data["next_request_at"], deadline,
+            "fresh shorter 429 cannot shorten a live cooldown"
+        );
+        assert!(
+            after_long.data["next_request_at"].as_i64().unwrap() > deadline,
+            "fresh longer 429 must extend cooldown"
+        );
+        assert_eq!(
+            recording_after.data, media,
+            "failure must preserve ready/path and avoid attaching stale errors"
+        );
+        assert_eq!(recording_after.version, 1);
+    }
     #[test]
     fn sync_range_blank_history_start_uses_unverified_default() {
         let now = providers::parse_utc("2026-11-12T12:34:56.789Z").unwrap();

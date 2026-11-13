@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_19_automated_verified_routerai_consent_pending
-stopped_at: Phase19 RouterAI code df7a162 published/healthy, exact2ASR+keylessPKCE helper implemented; browser consent awaiting user, actual RouterAIaccount/ASRpending; Telphinretry preserved; phase12paused
+status: phase_20_implementation_verified_release_pending
+stopped_at: Phase20 callback result and Telphin cooldown queue fixes tested; release pending; real RouterAI consent pending; phase12 paused
 last_updated: "2026-11-13"
 progress:
-  total_phases: 19
+  total_phases: 20
   implemented_phases: 18
   locally_verified_phases: 18
   accepted_phases: 0
@@ -18,7 +18,11 @@ progress:
 
 # Project State
 
-## Текущее состояние — фаза19
+## Текущее состояние — фаза20
+
+RouterAI пока не подключён: собственный helper истёк, ключ в runtime не сохранён; причина пустой страницы у провайдера не доказана. Исправлена собственная callback-страница: понятные ошибки, чистый URL, terminal expiry, ожидание600с/результат60с. Python14/14, новые3+timeout RED, настоящий Chrome synthetic callback/metaRefresh/mobile PASS. Телфин: 5187 ready файлов на месте, 28746 recording ждут quota; найдено вытеснение sync массовыми retry. Claim теперь учитывает cooldown своей компании до попытки, даёт due sync/retention/purge приоритет; cached backoff не продлевает quota, ready/path сохраняются, успешный download очищает last_error. ActualPG/worker и UI98/type/build PASS, independent plan-check0/reviews PASS. Выпуск и verifier ожидаются; реальный consent, завершение истории и humanUAT pending. Phase12/stash сохранены.
+
+## История реализации — фаза19
 
 Пользователь подтвердил RouterAI. Егоpubliccatalog606 содержитобаисходныхSTTmodelID; наэтомкомпьютереестьproviderdefs, credentialsнетниinline/env/legacy/SQLite, вPhone-компанииASR/analysisconnectionsещёнесохранены. ДобавленыexplicitlocalProviderRouterAI/fixedendpoint/tenant/keyseparation, exact2ASRcatalog+OpenCodeconfig, RUBseparate/commoncostNULLвключаяnativeanalysis. UI98PASS/невыбираетплатныемоделиавтоматически. OwnPKCEhelper/команда ./start-analyzer.sh connect-routerai открываетаккаунтбезкопированияключа; current-filelockmerge/600/atomicinstallrollback, Host/state/iss/TTL/query/replay/oneexchangeпроверены.
 

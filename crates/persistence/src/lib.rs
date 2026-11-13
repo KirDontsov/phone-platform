@@ -308,9 +308,18 @@ pub fn claim_job(
     diesel::sql_query("UPDATE jobs SET state='failed',error_code='attempts_exhausted',lease_owner=NULL,lease_until=NULL,updated_at=now()
         WHERE attempts>=max_attempts AND ((state='running' AND lease_until<now()) OR state IN ('queued','retry'))").execute(conn)?;
     diesel::sql_query("WITH candidate AS (
-          SELECT id FROM jobs WHERE attempts<max_attempts AND (cardinality($2::text[])=0 OR kind=ANY($2))
+          SELECT id FROM jobs candidate WHERE attempts<max_attempts AND (cardinality($2::text[])=0 OR kind=ANY($2))
           AND ((state IN ('queued','retry') AND next_attempt_at<=now()) OR (state='running' AND lease_until<now()))
-          ORDER BY next_attempt_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1
+          AND (kind NOT IN ('sync','recording') OR NOT EXISTS (
+            SELECT 1 FROM documents provider WHERE provider.organization_id=candidate.organization_id
+            AND provider.kind='connection' AND provider.data->>'kind'='telphin'
+            AND jsonb_typeof(provider.data->'next_request_at')='number'
+            AND provider.data->>'next_request_at' ~ '^[0-9]{1,19}$'
+            AND provider.data->'next_request_at' <= to_jsonb(9223372036854775807::bigint)
+            AND provider.data->'next_request_at' > to_jsonb(floor(extract(epoch FROM now()))::bigint)
+          ))
+          ORDER BY CASE kind WHEN 'purge' THEN 0 WHEN 'retention' THEN 0 WHEN 'sync' THEN 1 ELSE 2 END,
+            next_attempt_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1
         ) UPDATE jobs j SET state='running',attempts=j.attempts+1,lease_owner=$1,
           lease_until=now()+make_interval(secs=>$3),fencing=j.fencing+1,updated_at=now()
           FROM candidate c WHERE j.id=c.id RETURNING j.*")

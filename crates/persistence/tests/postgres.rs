@@ -222,3 +222,232 @@ fn migration_tenant_atomicity_leases_and_purge_are_enforced() {
             .unwrap();
     }
 }
+
+fn phase20_connection() -> persistence::Connection {
+    let pool = create_pool(
+        &std::env::var("TEST_DATABASE_URL").expect("isolated TEST_DATABASE_URL required"),
+    )
+    .unwrap();
+    migrate(&pool).unwrap();
+    let mut conn = connection(&pool).unwrap();
+    conn.begin_test_transaction().unwrap();
+    conn
+}
+fn phase20_org(conn: &mut PgConnection) -> Uuid {
+    let org = Uuid::new_v4();
+    diesel::sql_query("INSERT INTO organizations(id,name) VALUES($1,'Phase20 synthetic queue')")
+        .bind::<SqlUuid, _>(org)
+        .execute(conn)
+        .unwrap();
+    org
+}
+fn phase20_job(conn: &mut PgConnection, org: Uuid, kind: &str, age_hours: i32) -> Job {
+    let job = enqueue(
+        conn,
+        org,
+        kind,
+        None,
+        &Uuid::new_v4().to_string(),
+        json!({}),
+    )
+    .unwrap();
+    diesel::sql_query("UPDATE jobs SET next_attempt_at=now()-make_interval(hours=>$2) WHERE id=$1")
+        .bind::<SqlUuid, _>(job.id)
+        .bind::<diesel::sql_types::Integer, _>(age_hours)
+        .execute(conn)
+        .unwrap();
+    job
+}
+
+#[test]
+#[ignore = "requires isolated PostgreSQL TEST_DATABASE_URL"]
+fn phase20_cooldown_skips_jobs_without_attempts_and_preserves_tenant_and_expired_lease() {
+    let mut conn = phase20_connection();
+    let blocked = phase20_org(&mut conn);
+    let foreign = phase20_org(&mut conn);
+    save_document(
+        &mut conn,
+        blocked,
+        Uuid::new_v4(),
+        "connection",
+        None,
+        json!({"kind":"telphin","next_request_at":chrono::Utc::now().timestamp()+3600}),
+        None,
+    )
+    .unwrap();
+    let sync = phase20_job(&mut conn, blocked, "sync", 4);
+    let recording = phase20_job(&mut conn, blocked, "recording", 4);
+    diesel::sql_query("UPDATE jobs SET state='running',attempts=1,fencing=1,lease_owner='crashed',lease_until=now()-interval '1 minute' WHERE id=$1")
+        .bind::<SqlUuid,_>(recording.id).execute(&mut conn).unwrap();
+    let allowed = phase20_job(&mut conn, foreign, "recording", 1);
+    let kinds = ["sync".into(), "recording".into()];
+    let claimed = claim_job(&mut conn, "phase20", &kinds, 30)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        claimed.id, allowed.id,
+        "another tenant must proceed while this tenant cools down"
+    );
+    assert!(claim_job(&mut conn, "phase20", &kinds, 30)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT attempts::bigint AS n FROM jobs WHERE id=$1",
+            sync.id
+        ),
+        0
+    );
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT attempts::bigint AS n FROM jobs WHERE id=$1",
+            recording.id
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT fencing AS n FROM jobs WHERE id=$1",
+            recording.id
+        ),
+        1
+    );
+    diesel::sql_query("UPDATE documents SET data=jsonb_set(data,'{next_request_at}',to_jsonb(0)) WHERE organization_id=$1 AND kind='connection'")
+        .bind::<SqlUuid,_>(blocked).execute(&mut conn).unwrap();
+    let resumed = claim_job(&mut conn, "phase20", &kinds, 30)
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed.id, sync.id);
+    assert!(finish_job(
+        &mut conn,
+        resumed.id,
+        resumed.fencing,
+        "phase20",
+        "succeeded",
+        None,
+        0
+    )
+    .unwrap());
+    let recovered = claim_job(&mut conn, "phase20", &kinds, 30)
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.id, recording.id);
+    assert_eq!(recovered.fencing, 2);
+    assert_eq!(recovered.attempts, 2);
+    assert!(!finish_job(&mut conn, recording.id, 1, "crashed", "succeeded", None, 0).unwrap());
+}
+
+#[test]
+#[ignore = "requires isolated PostgreSQL TEST_DATABASE_URL"]
+fn phase20_control_and_history_are_not_starved_by_recording_backlog() {
+    let mut conn = phase20_connection();
+    let org = phase20_org(&mut conn);
+    let recording = phase20_job(&mut conn, org, "recording", 4);
+    let sync = phase20_job(&mut conn, org, "sync", 2);
+    let purge = phase20_job(&mut conn, org, "purge", 1);
+    let retention = phase20_job(&mut conn, org, "retention", 0);
+    let future = phase20_job(&mut conn, org, "purge", -1);
+    let exhausted = phase20_job(&mut conn, org, "purge", 5);
+    diesel::sql_query("UPDATE jobs SET attempts=max_attempts WHERE id=$1")
+        .bind::<SqlUuid, _>(exhausted.id)
+        .execute(&mut conn)
+        .unwrap();
+    let kinds = [
+        "sync".into(),
+        "recording".into(),
+        "purge".into(),
+        "retention".into(),
+    ];
+    for expected in [purge.id, retention.id, sync.id, recording.id] {
+        let job = claim_job(&mut conn, "phase20", &kinds, 30)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            job.id, expected,
+            "control/history work must precede bulk recordings"
+        );
+        assert!(finish_job(
+            &mut conn,
+            job.id,
+            job.fencing,
+            "phase20",
+            "succeeded",
+            None,
+            0
+        )
+        .unwrap());
+    }
+    assert!(claim_job(&mut conn, "phase20", &kinds, 30)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT attempts::bigint AS n FROM jobs WHERE id=$1",
+            future.id
+        ),
+        0
+    );
+    assert_eq!(count(&mut conn,"SELECT count(*)::bigint AS n FROM jobs WHERE id=$1 AND state='failed' AND error_code='attempts_exhausted'",exhausted.id),1);
+}
+
+#[test]
+#[ignore = "requires isolated PostgreSQL TEST_DATABASE_URL"]
+fn phase20_cooldown_json_is_safe_and_does_not_block_other_kinds() {
+    let mut conn = phase20_connection();
+    for value in [
+        json!(null),
+        json!("9999999999999999999999"),
+        json!({"bad":true}),
+        json!([]),
+        json!(true),
+        json!(-1),
+        json!(1e30),
+    ] {
+        let org = phase20_org(&mut conn);
+        save_document(
+            &mut conn,
+            org,
+            Uuid::new_v4(),
+            "connection",
+            None,
+            json!({"kind":"telphin","next_request_at":value}),
+            None,
+        )
+        .unwrap();
+        let expected = phase20_job(&mut conn, org, "sync", 1);
+        let job = claim_job(&mut conn, "phase20", &["sync".into()], 30)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.id, expected.id);
+        finish_job(
+            &mut conn,
+            job.id,
+            job.fencing,
+            "phase20",
+            "succeeded",
+            None,
+            0,
+        )
+        .unwrap();
+    }
+    let org = phase20_org(&mut conn);
+    save_document(
+        &mut conn,
+        org,
+        Uuid::new_v4(),
+        "connection",
+        None,
+        json!({"kind":"telphin","next_request_at":chrono::Utc::now().timestamp()+3600}),
+        None,
+    )
+    .unwrap();
+    let export = phase20_job(&mut conn, org, "export", 1);
+    let job = claim_job(&mut conn, "phase20", &["export".into()], 30)
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.id, export.id);
+}

@@ -31,6 +31,41 @@ AUTH_URL = "https://routerai.ru/auth"
 EXCHANGE_URL = "https://routerai.ru/api/v1/auth/keys"
 ISSUER = "https://routerai.ru"
 MAX_RUNTIME = 1024 * 1024
+CONSENT_SECONDS = 600
+COMPLETION_SECONDS = 60
+ERROR_MESSAGES = {
+    "routerai_consent_denied": "Выдача доступа отменена в RouterAI.",
+    "routerai_consent_expired": "Время ожидания входа истекло.",
+    "routerai_exchange_rejected": "RouterAI отклонил обмен кода на ключ. Нужен новый вход.",
+    "routerai_exchange_uncertain": "Ответ RouterAI не получен. Ключ мог быть создан: проверь API-ключи в кабинете. Старый код повторно не отправляется.",
+    "routerai_exchange_invalid_response": "RouterAI вернул неожиданный ответ. Ключ не установлен.",
+    "runtime_install_failed": "Не удалось установить доступ в Docker. Предыдущие настройки сохранены.",
+    "runtime_install_uncertain": "Не удалось подтвердить настройки Docker. Выполни ./start-analyzer.sh doctor.",
+    "routerai_saved_runner_restart_required": "Ключ сохранён локально, но коннектор не запустился. Выполни ./start-analyzer.sh up, затем ./start-analyzer.sh doctor.",
+    "routerai_connection_failed": "Не удалось завершить подключение. Выполни ./start-analyzer.sh doctor.",
+}
+
+
+def result_page(content, *, refresh=None):
+    # Only fixed application text/allowlisted local paths enter this document.
+    meta = ('<meta http-equiv="refresh" content="' + refresh + '">') if refresh else ""
+    return ('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>Подключение RouterAI · Phone Platform</title>' + meta +
+            '<style>body{font:17px/1.6 system-ui;margin:10vh auto;padding:24px;max-width:660px;color:#182936;background:#f5f8fa}'
+            'main{background:white;padding:32px;border-radius:20px}h1{font-size:25px}code{overflow-wrap:anywhere;font-size:14px}a{color:#007c83}</style>'
+            '<main><h1>Подключение RouterAI</h1>' + content + '</main></html>').encode()
+
+
+def problem_page(status, *, redirect=False):
+    messages = {
+        400: "Ссылка возврата не прошла проверку. Доступ не подтверждён.",
+        404: "Страница подключения не найдена.",
+        409: "Этот код уже обработан. Проверь итог подключения, повторно отправлять код нельзя.",
+        410: "Время ожидания входа истекло. Нужен новый вход.",
+    }
+    return result_page('<p>' + messages[status] + '</p><p>Для нового входа выполни <code>./start-analyzer.sh connect-routerai</code> и используй открывшееся окно.</p>'
+                       '<p><a href="/connected">Проверить состояние подключения</a></p><p>Ключи и коды в чат присылать не нужно.</p>',
+                       refresh='0;url=/problem/' + str(status) if redirect else None)
 
 
 class ConnectError(Exception):
@@ -270,17 +305,29 @@ def callback_server(flow):
 
         def do_GET(self):
             hosts = self.headers.get_all("Host", [])
+            if hosts == [flow.host] and self.path in {"/problem/400", "/problem/404", "/problem/409", "/problem/410"}:
+                status = int(self.path.rsplit("/", 1)[1])
+                self.respond(status, problem_page(status), {"Content-Type": "text/html; charset=utf-8"})
+                return
             if self.path == "/connected" and hosts == [flow.host]:
+                refresh = None
                 if not flow.done.is_set():
-                    content = '<meta http-equiv="refresh" content="2"><p>Подключаем RouterAI…</p>'
+                    content = '<p>Подключаем RouterAI… Подожди, пока появится результат.</p>' if flow.consumed else '<p>Ожидается подтверждение в RouterAI. Доступ пока не подключён.</p>'
+                    refresh = '2'
                 elif flow.result.get("state") == "connected":
                     content = '<p>RouterAI подключён. Ключ сохранён локально. Окно можно закрыть.</p>'
                 else:
-                    content = '<p>Подключение не завершено. Проверь сообщение в терминале. Ключ в чат присылать не нужно.</p>'
-                self.respond(200, ('<!doctype html><meta charset="utf-8">' + content).encode(), {"Content-Type": "text/html; charset=utf-8"})
+                    error = flow.result.get("error")
+                    if error not in ERROR_MESSAGES:
+                        error = "routerai_connection_failed"
+                    content = '<p>RouterAI не подключён: ' + ERROR_MESSAGES[error] + '</p><p>Код ошибки: <code>' + error + '</code>.</p><p>Для нового входа: <code>./start-analyzer.sh connect-routerai</code>.</p><p>Ключи и коды в чат присылать не нужно.</p>'
+                self.respond(200, result_page(content, refresh=refresh), {"Content-Type": "text/html; charset=utf-8"})
                 return
             status, code = flow.claim(hosts, self.path)
-            self.respond(status, headers={"Location": "/connected"} if status == 303 else None)
+            if status == 303:
+                self.respond(status, headers={"Location": "/connected"})
+            else:
+                self.respond(status, problem_page(status, redirect=hosts == [flow.host]), {"Content-Type": "text/html; charset=utf-8"})
             if code is not None:
                 threading.Thread(target=flow.finish, args=(code,), daemon=True).start()
 
@@ -315,7 +362,7 @@ def main(argv=None):
     parser.add_argument("--source", type=Path, default=Path.home() / ".config/opencode/opencode.json")
     parser.add_argument("--project", default="phone-analyzer")
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--timeout", type=int, default=300)
+    parser.add_argument("--timeout", type=int, default=CONSENT_SECONDS)
     args = parser.parse_args(argv)
     if not 30 <= args.timeout <= 600:
         raise ConnectError("invalid_consent_timeout")
@@ -344,9 +391,10 @@ def main(argv=None):
             server.handle_request()
         if not flow.done.is_set():
             flow.result = {"state": "error", "error": "routerai_consent_expired"}
+            flow.done.set()
         print(json.dumps(flow.result), flush=True)
-        # Briefly serve the clean callback URL so the browser can show completion.
-        grace = time.monotonic() + 3
+        # Keep the result available long enough for a slow browser redirect.
+        grace = time.monotonic() + COMPLETION_SECONDS
         while time.monotonic() < grace:
             server.handle_request()
         return 0 if flow.result.get("state") == "connected" else 1

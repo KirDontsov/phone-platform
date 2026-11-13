@@ -752,3 +752,57 @@ async fn ambiguous_delivery_survives_configuration_failure_and_manual_retry() {
         .execute(&mut conn)
         .unwrap();
 }
+
+#[tokio::test]
+async fn phase20_ready_state_recording_never_contacts_provider_or_loses_cached_path() {
+    let _serial = PG_TEST_LOCK.lock().unwrap();
+    let Some((worker, directory, org)) = review_worker(false) else {
+        return;
+    };
+    let call = Uuid::new_v4();
+    let rec = Uuid::new_v4();
+    let relative = format!("{org}/synthetic-preserved.wav");
+    std::fs::create_dir(directory.path().join(org.to_string())).unwrap();
+    std::fs::write(directory.path().join(&relative), b"synthetic cached audio").unwrap();
+    let mut conn = persistence::connection(&worker.pool).unwrap();
+    persistence::save_document(&mut conn, org, call, "call", None, json!({}), None).unwrap();
+    persistence::save_document(
+        &mut conn,
+        org,
+        rec,
+        "recording",
+        Some(call),
+        json!({"state":"ready","ready":false,"path":relative}),
+        None,
+    )
+    .unwrap();
+    let job = persistence::enqueue(
+        &mut conn,
+        org,
+        "recording",
+        Some(rec),
+        "phase20-preserve",
+        json!({}),
+    )
+    .unwrap();
+    drop(conn);
+    worker.run_once().await.unwrap();
+    let mut conn = persistence::connection(&worker.pool).unwrap();
+    let jobs = persistence::list_jobs(&mut conn, org, 10).unwrap();
+    let finished = jobs.iter().find(|j| j.id == job.id).unwrap();
+    let doc = persistence::get_document(&mut conn, org, rec)
+        .unwrap()
+        .unwrap();
+    let succeeded = finished.state == "succeeded";
+    let preserved = doc.data["state"] == "ready" && doc.data["path"] == relative;
+    diesel::sql_query("DELETE FROM organizations WHERE id=$1")
+        .bind::<SqlUuid, _>(org)
+        .execute(&mut conn)
+        .unwrap();
+    assert!(
+        succeeded,
+        "API-playable recording must finish without provider configuration"
+    );
+    assert!(preserved, "cached path/readiness must survive retry");
+    assert!(directory.path().join(relative).is_file());
+}

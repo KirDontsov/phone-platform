@@ -7,7 +7,7 @@ function call(id:string,extra:Partial<Call>&{recording_state?:RecordingState}={}
 const router=createRouter({history:createMemoryHistory(),routes:[{path:'/:pathMatch(.*)*',component:{template:'<div/>'}},{path:'/calls/:id',component:{template:'<div/>'}}]})
 describe('recording availability in call tables',()=>{
  it('shows a separate recording column with textual availability for every server state',()=>{
-  const states:RecordingState[]=['ready','pending','rate_limited','failed','none','unknown'],labels=['Можно слушать','Загружается','Лимит Телфина','Ошибка загрузки','Нет записи','Не загружена'];const wrapper=mount(CallTable,{props:{calls:states.map(state=>call(state,{recording_state:state,has_recording:state!=='none'}))},global:{plugins:[router]}})
+  const states:RecordingState[]=['ready','pending','rate_limited','failed','none','unknown'],labels=['Можно слушать','Загружается','Ожидает Телфин','Ошибка загрузки','Нет записи','Не загружена'];const wrapper=mount(CallTable,{props:{calls:states.map(state=>call(state,{recording_state:state,has_recording:state!=='none'}))},global:{plugins:[router]}})
   try{const headers=wrapper.findAll('th').map(h=>h.text()),index=headers.indexOf('Запись');expect(index).toBeGreaterThanOrEqual(0);const rows=wrapper.findAll('tbody tr');for(let i=0;i<states.length;i++){const cell=rows[i]!.findAll('td')[index]!;expect(cell.text()).toBe(labels[i]);expect(cell.find('svg').exists()).toBe(true)}}finally{wrapper.unmount()}
  })
  it('never advertises provider presence or a ready analysis stage as playable media for legacy calls',()=>{

@@ -14,6 +14,8 @@ pub struct ProviderError {
     pub code: String,
     pub retryable: bool,
     pub retry_after_seconds: Option<u64>,
+    // A cached connection deadline is not a fresh provider response.
+    pub cached_backoff: bool,
 }
 impl ProviderError {
     pub fn permanent(code: &str) -> Self {
@@ -21,6 +23,7 @@ impl ProviderError {
             code: code.into(),
             retryable: false,
             retry_after_seconds: None,
+            cached_backoff: false,
         }
     }
     pub fn retry(code: &str, seconds: u64) -> Self {
@@ -28,6 +31,13 @@ impl ProviderError {
             code: code.into(),
             retryable: true,
             retry_after_seconds: Some(seconds.clamp(1, 86_400)),
+            cached_backoff: false,
+        }
+    }
+    pub fn cached_rate_limit(seconds: u64) -> Self {
+        Self {
+            cached_backoff: true,
+            ..Self::retry("provider_rate_limited", seconds)
         }
     }
 }

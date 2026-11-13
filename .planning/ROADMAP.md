@@ -185,3 +185,10 @@ Research→independentPLAN-CHECKrevision1PASS→execute→independentROOT/AUTHre
 **Depends on:** Phase18; phase12paused.
 **Plan:**19-01 explicitRouterAIprotocol/currency/keylessUI; existingcredentialimport/PKCEone-timeaccountconsent; tests/review/rollout/UAT.
 Research→PLAN-CHECKrevision1PASS→execute→independentreviewPASS→code/runtime15-df7a162 publishedhealthy. RouterAIpubliccatalog200/exact2models, privatecallback/helperfixtures/tenantdeny/currencytestsPASS; реальныйaccountconsentбраузероткрытawaitinguser. Useridentity/inference/ASRqualitypending; no paidmodel/audio/operatorjobs. ИсходныйTelphinretry/checkpointсохранён, другиеphasesacceptanceневыдуманы. Документыphases/19-routerai-local-provider.
+
+### Phase20: Onboarding Result / Recording Queue Recovery
+
+**Goal:** понятный результат входа RouterAI и автоматическая загрузка записей без расхода попыток на известную паузу Телфина.
+**Depends on:** Phases17–19; phase12paused.
+**Plan:**20-01 readable callback/terminal expiry; tenant-aware cooldown claim/history priority/ready preservation; tests/review/release/UAT.
+Research → independent PLAN-CHECK PASS0/3 → execute/tests/reviews PASS; release/verifier pending. Реальный RouterAI consent и завершение загрузки под внешней квотой не подменяются локальными тестами.

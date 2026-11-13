@@ -78,6 +78,75 @@ class RouterAIConnectTests(unittest.TestCase):
     def callback(self, flow, **extra):
         return {'code': CODE, 'state': flow.state, 'iss': subject.ISSUER, **extra}
 
+    def test_rejected_callback_has_readable_clean_error_page_without_consuming_consent(self):
+        calls = []
+        with callback_fixture(lambda *args: calls.append(args) or KEY) as (flow, request):
+            status, headers, body = request(self.callback(flow, state='incorrect'))
+            self.assertEqual(status, 400)
+            self.assertIn('text/html', headers.get('Content-Type', ''))
+            self.assertIn('/problem/400', body.decode())
+            self.assertIn('refresh', body.decode().lower())
+            self.assertIn('Подключение', body.decode())
+            clean_status, _, clean = request(path='/problem/400')
+            self.assertEqual(clean_status, 400)
+            self.assertIn('connect-routerai', clean.decode())
+            for secret in [KEY, CODE, flow.state, flow.verifier, 'incorrect']:
+                self.assertNotIn(secret, (body + clean).decode())
+            self.assertEqual(calls, [])
+            self.assertFalse(flow.consumed)
+            self.assertEqual(request(self.callback(flow))[0], 303)
+            self.assertTrue(flow.done.wait(2))
+
+    def test_clean_completion_explains_safe_exchange_failure_and_retry(self):
+        def rejected(*args): raise subject.ConnectError('routerai_exchange_rejected')
+        with callback_fixture(rejected) as (flow, request):
+            request(self.callback(flow)); self.assertTrue(flow.done.wait(2))
+            status, _, body = request(path='/connected')
+            self.assertEqual(status, 200)
+            self.assertIn('routerai_exchange_rejected', body.decode())
+            self.assertIn('connect-routerai', body.decode())
+            self.assertIn('не подключён', body.decode())
+
+    def test_expired_replayed_and_unknown_error_pages_never_echo_values(self):
+        with callback_fixture(lambda *args: KEY) as (flow, request):
+            for status in [409, 410]:
+                actual, _, body = request(path='/problem/' + str(status))
+                self.assertEqual(actual, status)
+                self.assertIn('Подключение', body.decode())
+            flow.result = {'state': 'error', 'error': KEY}; flow.done.set()
+            self.assertNotIn(KEY, request(path='/connected')[2].decode())
+
+    def test_main_timeout_serves_terminal_expired_result_in_completion_window(self):
+        flow = subject.ConsentFlow(ORG, clock=lambda: 100.)
+        flow.deadline = 99.
+        server = subject.callback_server(flow)
+        started = threading.Event()
+        results = []
+        def bound(_):
+            started.set()
+            return server
+        with tempfile.TemporaryDirectory() as temporary, contextlib.redirect_stdout(io.StringIO()), \
+             mock.patch.object(subject, 'ROOT', Path(temporary)), \
+             mock.patch.object(subject, 'import_tools'), \
+             mock.patch.object(subject, 'ConsentFlow', return_value=flow), \
+             mock.patch.object(subject, 'callback_server', side_effect=bound), \
+             mock.patch.object(subject, 'COMPLETION_SECONDS', .5):
+            thread = threading.Thread(target=lambda: results.append(subject.main(['--organization', ORG, '--no-browser'])), daemon=True)
+            thread.start()
+            try:
+                self.assertTrue(started.wait(2))
+                connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=2)
+                connection.request('GET', '/connected')
+                response = connection.getresponse(); body = response.read().decode(); connection.close()
+                self.assertEqual(response.status, 200)
+                self.assertIn('routerai_consent_expired', body)
+                self.assertNotIn('Ожидается подтверждение', body)
+                self.assertTrue(flow.done.is_set())
+            finally:
+                thread.join(3)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(results, [1])
+
     def test_real_localhost_callback_pkce_strip_and_single_exchange_no_secret_output(self):
         stdout, stderr, committed = io.StringIO(), io.StringIO(), []
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), provider_fixture() as (opener, calls, _):
