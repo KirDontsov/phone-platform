@@ -2,6 +2,9 @@ import fs from 'node:fs';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID = /^[a-zA-Z0-9_-]{1,64}$/;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
+export const ROUTERAI_ASR_IDS = Object.freeze(['moondream/parakeet-ultra', 'nvidia/nemotron-3.5-transcribe']);
+export const ROUTERAI_URL = 'https://routerai.ru/api/v1';
+export function textModelAllowed(settings, provider, model) { return !!settings?.providers[provider]?.models[model] && !(provider === 'routerai' && ROUTERAI_ASR_IDS.includes(model)); }
 export const LOCAL_ASR_MODEL = 'apinex/voice-stt';
 export function parseLocalSettings(raw) {
   if (!raw) return null;
@@ -13,7 +16,8 @@ export function parseLocalSettings(raw) {
     const endpoint = new URL(provider.options.baseURL);
     if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.protocol === 'http:' && !['host.docker.internal', '127.0.0.1', 'localhost'].includes(endpoint.hostname)) throw Error('local_provider_config_invalid');
     if (!object(provider.models) || Object.keys(provider.models).length > 256 || Object.keys(provider.models).some(model => model.length > 200 || /[\r\n\0]/.test(model))) throw Error('local_provider_config_invalid');
-    providers[id] = { name: typeof provider.name === 'string' ? provider.name.slice(0, 150) : id, npm: '@ai-sdk/openai-compatible', options: { baseURL: endpoint.toString().replace(/\/$/, ''), apiKey: provider.options.apiKey }, models: Object.fromEntries(Object.entries(provider.models).map(([model, definition]) => [model, { name: typeof definition?.name === 'string' ? definition.name.slice(0, 150) : model }])) };
+    if (id === 'routerai' && endpoint.toString().replace(/\/$/, '') !== ROUTERAI_URL) throw Error('local_provider_config_invalid');
+    providers[id] = { name: typeof provider.name === 'string' ? provider.name.slice(0, 150) : id, npm: '@ai-sdk/openai-compatible', options: { baseURL: endpoint.toString().replace(/\/$/, ''), apiKey: provider.options.apiKey }, models: Object.fromEntries(Object.entries(provider.models).map(([model, definition]) => [model, { name: typeof definition?.name === 'string' ? definition.name.slice(0, 150) : model, ...(id === 'routerai' && ROUTERAI_ASR_IDS.includes(model) ? {attachment:true,tool_call:false,modalities:{input:['audio'],output:['text']}} : {}) }])) };
   }
   if (Object.keys(providers).length > 16) throw Error('local_provider_config_invalid');
   return { version: 1, organization_id: value.organization_id.toLowerCase(), providers };
@@ -27,8 +31,9 @@ export function readLocalSettings(file) {
 export function localAuthorized(settings, organization) { return !!settings && typeof organization === 'string' && UUID.test(organization) && settings.organization_id === organization.toLowerCase(); }
 export function localCatalog(settings, organization) {
   if (!localAuthorized(settings, organization)) return { available: false, providers: [], asr_models: [] };
+  const routerai = settings.providers.routerai?.options.baseURL === ROUTERAI_URL;
   const asr = settings.providers.apinex?.options.baseURL === 'https://api.apinex.bond/v1';
-  return { available: true, providers: Object.entries(settings.providers).map(([id, provider]) => ({ id, name: provider.name, models: Object.entries(provider.models).map(([model, definition]) => ({ id: `${id}/${model}`, name: definition.name })) })), asr_models: asr ? [{ id: LOCAL_ASR_MODEL, name: 'APInex Voice STT', provider: 'apinex' }] : [] };
+  return { available: true, providers: Object.entries(settings.providers).map(([id, provider]) => ({ id, name: provider.name, models: Object.entries(provider.models).filter(([model]) => textModelAllowed(settings, id, model)).map(([model, definition]) => ({ id: `${id}/${model}`, name: definition.name })) })), asr_models: [...(routerai ? ROUTERAI_ASR_IDS.map((id, index) => ({id, name: index ? 'RouterAI · Nemotron 3.5 Transcribe' : 'RouterAI · Parakeet Ultra', provider: 'routerai'})) : []), ...(asr ? [{ id: LOCAL_ASR_MODEL, name: 'APInex Voice STT', provider: 'apinex' }] : [])] };
 }
 export function redactNative(value, settings) {
   const secrets = Object.values(settings?.providers || {}).map(provider => provider.options.apiKey);

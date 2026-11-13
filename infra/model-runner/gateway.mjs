@@ -2,7 +2,7 @@ import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { attachCodexProxy } from './codex-proxy.mjs';
-import { LOCAL_ASR_MODEL, localAuthorized, localCatalog, redactNative, apinexTranscript } from './local-providers.mjs';
+import { LOCAL_ASR_MODEL, ROUTERAI_ASR_IDS, ROUTERAI_URL, textModelAllowed, localAuthorized, localCatalog, redactNative, apinexTranscript } from './local-providers.mjs';
 
 export const ASR_MODEL_IDS = Object.freeze(['moondream/parakeet-ultra', 'nvidia/nemotron-3.5-transcribe']);
 const UPSTREAM = 'https://openrouter.ai/api/v1';
@@ -87,6 +87,12 @@ async function checked(response) {
   throw failure(422, 'provider_request_failed');
 }
 async function checkExistingAccount(provider, fetchImpl, signal, freeModel) {
+  if (provider.options.baseURL === ROUTERAI_URL) {
+    const response = await fetchImpl(ROUTERAI_URL + '/key', {method:'GET',headers:{Authorization:'Bearer ' + provider.options.apiKey},redirect:'error',signal});
+    await checked(response); const metadata = await boundedJson(response, signal);
+    if (!object(metadata) || !object(metadata.data) || metadata.error) throw failure(502, 'invalid_provider_response');
+    return;
+  }
   if (provider.options.baseURL !== 'https://api.apinex.bond/v1') return;
   const headers = { Authorization: 'Bearer ' + provider.options.apiKey };
   const balanceResponse = await fetchImpl(provider.options.baseURL + '/balance', { method: 'GET', headers, redirect: 'error', signal });
@@ -129,6 +135,7 @@ function transcriptResponse(raw) {
   if (object(raw.usage)) {
     out.usage = Object.fromEntries(['seconds', 'input_tokens', 'output_tokens', 'total_tokens', 'cost'].filter(key => Number.isFinite(raw.usage[key]) && raw.usage[key] >= 0).map(key => [key, raw.usage[key]]));
   }
+  if (raw.usage?.provider_currency === 'RUB' && Number.isFinite(raw.usage.provider_cost) && raw.usage.provider_cost >= 0) { out.usage ??= {}; out.usage.provider_cost = raw.usage.provider_cost; out.usage.provider_currency = 'RUB'; }
   return out;
 }
 function nativeRoute(method, path) {
@@ -176,7 +183,7 @@ export function createGateway({ password, config, fetchImpl = fetch, nativeBase 
         const body = await jsonRequest(req, 4096, controller.signal);
         if (!strictKeys(body, ['model']) || typeof body.model !== 'string') throw failure(422, 'local_model_unavailable');
         const slash = body.model.indexOf('/'), provider = localSettings.providers[body.model.slice(0, slash)], model = body.model.slice(slash + 1);
-        if (slash < 1 || !provider?.models[model]) throw failure(422, 'local_model_unavailable');
+        if (slash < 1 || !textModelAllowed(localSettings, body.model.slice(0, slash), model)) throw failure(422, 'local_model_unavailable');
         await checkExistingAccount(provider, fetchImpl, controller.signal, model.startsWith('free/'));
         const probe = await fetchImpl(provider.options.baseURL + '/models', { method: 'GET', headers: { Authorization: 'Bearer ' + provider.options.apiKey }, redirect: 'error', signal: controller.signal });
         await checked(probe); const metadata = await boundedJson(probe, controller.signal);
@@ -188,6 +195,32 @@ export function createGateway({ password, config, fetchImpl = fetch, nativeBase 
         if (inFlight >= 2) { req.resume(); throw failure(429, 'asr_busy', 5); }
         inFlight++; counted = true;
         const body = await jsonRequest(req, url.pathname === '/asr/test' ? 4096 : REQUEST_LIMIT, controller.signal);
+        const localProvider = body.local_provider;
+        const routerai = localProvider === 'routerai';
+        if (localProvider !== undefined && !['apinex','routerai'].includes(localProvider)) throw failure(422, 'asr_invalid_request');
+        if (routerai) {
+          if (!scoped || localSettings.providers.routerai?.options.baseURL !== ROUTERAI_URL) throw failure(403, 'local_provider_not_authorized');
+          if (req.headers['x-openrouter-api-key'] !== undefined || !ROUTERAI_ASR_IDS.includes(body.model)) throw failure(422, 'asr_invalid_request');
+          const provider = localSettings.providers.routerai;
+          const plain = {...body}; delete plain.local_provider;
+          const model = selectedModel(plain, localModels.filter(model=>model.provider==='routerai'));
+          const headers = {Authorization:'Bearer '+provider.options.apiKey};
+          if (url.pathname === '/asr/test') {
+            if (!strictKeys(plain, ['model'])) throw failure(422, 'asr_invalid_request');
+            await checkExistingAccount(provider, fetchImpl, controller.signal, false);
+            const response = await fetchImpl(ROUTERAI_URL + '/models', {method:'GET',headers,redirect:'error',signal:controller.signal});
+            await checked(response); const metadata = await boundedJson(response,controller.signal);
+            if (!Array.isArray(metadata.data) || !metadata.data.some(item=>item.id===model && item.architecture?.output_modalities?.includes('transcription'))) throw failure(422, 'asr_model_unsupported');
+            send(res,200,{ok:true,model,provider:'routerai',message:'Existing RouterAI account and transcription model verified; no audio submitted.'});return;
+          }
+          const payload = transcriptionRequest(plain,localModels.filter(model=>model.provider==='routerai'));
+          const response = await fetchImpl(ROUTERAI_URL + '/audio/transcriptions', {method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(payload),redirect:'error',signal:controller.signal});
+          await checked(response); const raw = await boundedJson(response,controller.signal);
+          // RouterAI's cost is RUB, and must never enter the common unqualified cost total.
+          if (object(raw.usage)) { const rub = raw.usage.cost; delete raw.usage.cost; delete raw.usage.provider_cost; delete raw.usage.provider_currency; if(Number.isFinite(rub)&&rub>=0){raw.usage.provider_cost=rub;raw.usage.provider_currency='RUB';} }
+          send(res,200,transcriptResponse(raw));return;
+        }
+        if (localProvider !== undefined) { if (localProvider !== 'apinex' || body.model !== LOCAL_ASR_MODEL) throw failure(422, 'asr_invalid_request'); delete body.local_provider; }
         const local = body.model === LOCAL_ASR_MODEL;
         if (local && (!scoped || !localModels.length)) throw failure(403, 'local_provider_not_authorized');
         const model = selectedModel(body, [...catalog, ...localModels]);
@@ -236,7 +269,7 @@ export function createGateway({ password, config, fetchImpl = fetch, nativeBase 
       }
       if (localSettings && nativeMessage) {
         const provider = localSettings.providers[body?.model?.providerID];
-        if (!provider?.models[body?.model?.modelID]) throw failure(422, 'local_model_unavailable');
+        if (!textModelAllowed(localSettings, body?.model?.providerID, body?.model?.modelID)) throw failure(422, 'local_model_unavailable');
       }
       const r = await nativeRequest(nativeBase + url.pathname, { method: req.method, headers: { Authorization: expected.toString(), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: controller.signal });
       if (!r.ok) { await r.body?.cancel(); throw failure(r.status, 'connector_native_request_failed'); }

@@ -461,3 +461,58 @@ async fn native_opencode_payment_error_is_not_misreported_as_an_empty_model_answ
     );
     std::env::remove_var("PROVIDER_ALLOWED_HOSTS");
 }
+
+#[tokio::test]
+async fn routerai_original_asr_models_use_explicit_local_provider_without_key_and_keep_rub_separate(
+) {
+    let _guard = ENV_LOCK.lock().unwrap();
+    for model in phone_worker::asr_connector::MODELS {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synthetic.wav");
+        std::fs::write(&path, b"RIFF synthetic local fixture").unwrap();
+        let (url, requests, server) = scripted_server(vec![("POST", "/asr/transcriptions", 200,
+            json!({"text":"Synthetic RouterAI transcript","segments":[{"start":0.,"end":1.,"text":"Synthetic RouterAI transcript","speaker":0}],"usage":{"seconds":2,"cost":3.25,"provider_cost":3.25,"provider_currency":"RUB"}}))]).await;
+        let _env = AsrEnvironment::new(&url);
+        let org = "11111111-1111-4111-8111-111111111111";
+        let config = json!({"provider":"opencode","base_url":url,"model":model,"local_provider":"routerai","credential_source":"local","_organization_id":org});
+        let transcript = models::transcribe(&config, &path, 2., false, &json!({}))
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(transcript["upstream_provider"], "routerai");
+        assert_eq!(transcript["model"], model);
+        assert_eq!(transcript["segments"][0]["role"], "unknown");
+        assert!(
+            transcript["usage"]["cost"].is_null(),
+            "RUB cannot enter the common cost total even through a stale connector"
+        );
+        assert_eq!(transcript["usage"]["provider_cost"], 3.25);
+        assert_eq!(transcript["usage"]["provider_currency"], "RUB");
+        let rows = requests.lock().unwrap();
+        assert_eq!(rows[0].1["local_provider"], "routerai");
+        let headers = rows[0].1["_captured_headers"]
+            .as_str()
+            .unwrap()
+            .to_lowercase();
+        assert!(headers.contains(&format!("x-phone-organization: {org}")));
+        assert!(!headers.contains("x-openrouter-api-key"));
+    }
+}
+
+#[tokio::test]
+async fn routerai_native_text_cost_is_unknown_in_common_totals_without_currency_aware_billing() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var("PROVIDER_ALLOWED_HOSTS", "127.0.0.1");
+    let (url, _, server) = scripted_server(vec![
+        ("GET", "/config", 200, json!({"permission":{"*":"deny"},"mcp":{}})),
+        ("GET", "/experimental/tool/ids", 200, json!([])),
+        ("POST", "/session", 200, json!({"id":"synthetic-session"})),
+        ("POST", "/session/synthetic-session/message", 200, json!({"info":{"tokens":{"input":10,"output":2},"cost":3.25},"parts":[{"type":"text","text":"{\"summary\":\"synthetic\"}"}]})),
+        ("DELETE", "/session/synthetic-session", 200, json!(true)),
+    ]).await;
+    let result = models::analyze(&json!({"provider":"opencode","base_url":url,"api_key":"synthetic-only","model":"routerai/vendor-text"}), &json!({"transcript":{"segments":[]}}), false).await.unwrap();
+    server.await.unwrap();
+    assert!(result["usage"]["cost"].is_null());
+    assert_eq!(result["usage"]["input_tokens"],10);
+    std::env::remove_var("PROVIDER_ALLOWED_HOSTS");
+}

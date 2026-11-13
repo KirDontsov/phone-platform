@@ -533,7 +533,7 @@ pub async fn analyze(config: &Value, input: &Value, allow_demo: bool) -> Result<
                 _ => ProviderError::permanent("provider_request_rejected"),
             });
         }
-        runner_usage = json!({"input_tokens":raw["info"]["tokens"]["input"].as_u64().unwrap_or(0),"output_tokens":raw["info"]["tokens"]["output"].as_u64().unwrap_or(0),"cost":raw["info"]["cost"].as_f64()});
+        runner_usage = json!({"input_tokens":raw["info"]["tokens"]["input"].as_u64().unwrap_or(0),"output_tokens":raw["info"]["tokens"]["output"].as_u64().unwrap_or(0),"cost":if model.starts_with("routerai/") {None} else {raw["info"]["cost"].as_f64()}});
         raw["parts"]
             .as_array()
             .into_iter()

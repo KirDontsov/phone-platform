@@ -7,6 +7,7 @@ import {useAuth} from '../src/entities/auth/model'
 import {resetContext} from '../src/shared/api/client'
 import type {Me} from '../src/shared/interfaces'
 const localCatalog={available:true,providers:[{id:'apinex',name:'APInex',models:[{id:'apinex/free/test-model',name:'Existing free model'}]}],asr_models:[{id:'apinex/voice-stt',name:'APInex Voice STT',provider:'apinex'}]}
+const routerCatalog={available:true,providers:[{id:'routerai',name:'RouterAI',models:[{id:'routerai/text-model',name:'Existing RouterAI model'}]}],asr_models:[{id:'moondream/parakeet-ultra',name:'RouterAI · Parakeet Ultra',provider:'routerai'},{id:'nvidia/nemotron-3.5-transcribe',name:'RouterAI · Nemotron 3.5 Transcribe',provider:'routerai'},...localCatalog.asr_models]}
 afterEach(()=>{resetContext();vi.unstubAllGlobals()})
 async function render(tab='analysis',initial:Record<string,unknown>={},catalog:unknown=localCatalog,role='owner'){
  const pinia=createPinia();setActivePinia(pinia);useAuth().adopt({user:{id:'u',email:'owner@example.test',name:'Owner'},organization:{id:'o',name:'Company',timezone:'UTC',callback_minutes:120,retention_days:180},organizations:[{id:'o',name:'Company',role}],role,csrf_token:'csrf',demo_mode:true} as Me)
@@ -58,6 +59,36 @@ describe('existing local OpenCode providers',()=>{
  it('keeps local model selection readonly for a reviewer',async()=>{
   const {wrapper,writes}=await render('asr',{provider:'opencode',credential_source:'local',local_provider:'apinex',model:'apinex/voice-stt',base_url:'http://model-runner:4096'},localCatalog,'reviewer');try{
    expect(field(wrapper,'Доступ к моделям').find('select').attributes('disabled')).toBeDefined();expect(field(wrapper,'Модель').find('select').attributes('disabled')).toBeDefined();await wrapper.find('form').trigger('submit');await flushPromises();expect(writes).toHaveLength(0)
+  }finally{wrapper.unmount()}
+ })
+})
+
+describe('RouterAI through local OpenCode',()=>{
+ it.each(['moondream/parakeet-ultra','nvidia/nemotron-3.5-transcribe'])('keeps %s on RouterAI without a new key or an automatic request',async(modelId)=>{
+  const {wrapper,writes}=await render('asr',{provider:'openai',base_url:'https://api.openai.com/v1',api_key:'<configured>'},routerCatalog);try{
+   await field(wrapper,'Провайдер').find('select').setValue('opencode')
+   expect((field(wrapper,'Модель').find('select').element as HTMLSelectElement).value).toBe('');expect(writes).toHaveLength(0)
+   const model=field(wrapper,'Модель').find('select');await model.setValue(modelId)
+   expect(wrapper.text()).toContain('RouterAI использует лимит или баланс твоего аккаунта RouterAI')
+   expect(wrapper.text()).not.toContain('APInex Voice STT использует лимит')
+   expect(wrapper.findAll('label').some(l=>l.text().startsWith('API-ключ'))).toBe(false);expect(writes).toHaveLength(0)
+   await wrapper.find('form').trigger('submit');await flushPromises()
+   expect(writes).toHaveLength(1);expect(writes[0]!.body.config).toMatchObject({provider:'opencode',credential_source:'local',local_provider:'routerai',model:modelId});expect(writes[0]!.body.config).not.toHaveProperty('api_key')
+   // The identical model ID in the separate legacy mode still requires its own key.
+   await field(wrapper,'Доступ к моделям').find('select').setValue('api_key');await field(wrapper,'Модель').find('select').setValue(modelId)
+   expect(field(wrapper,'API-ключ OpenRouter').find('input').exists()).toBe(true);expect(writes).toHaveLength(1)
+   await field(wrapper,'API-ключ OpenRouter').find('input').setValue('synthetic-openrouter-only-key');await wrapper.find('form').trigger('submit');await flushPromises()
+   expect(writes).toHaveLength(2);expect(writes[1]!.body.config).toMatchObject({provider:'opencode',credential_source:'api_key',model:modelId,api_key:'synthetic-openrouter-only-key'});expect(writes[1]!.body.config).not.toHaveProperty('local_provider')
+  }finally{wrapper.unmount()}
+ })
+ it('does not name or enable a provider before a local ASR model is chosen',async()=>{
+  const {wrapper,writes}=await render('asr',{provider:'openai'},routerCatalog);try{
+   await field(wrapper,'Провайдер').find('select').setValue('opencode')
+   expect(wrapper.text()).not.toContain('APInex Voice STT использует лимит')
+   expect(wrapper.text()).not.toContain('RouterAI использует лимит')
+   expect(wrapper.text()).toContain('Выбери модель, чтобы увидеть условия её провайдера')
+   await wrapper.find('form').trigger('submit');await flushPromises();expect(writes).toHaveLength(0)
+   await field(wrapper,'Модель').find('select').setValue('apinex/voice-stt');expect(wrapper.text()).toContain('APInex Voice STT использует лимит или баланс твоего APInex');expect(writes).toHaveLength(0)
   }finally{wrapper.unmount()}
  })
 })

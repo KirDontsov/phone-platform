@@ -14,6 +14,7 @@ import secrets
 import stat
 import subprocess
 import sys
+import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL = '.env.analyzer.local'
@@ -171,7 +172,7 @@ def status(root, config):
 def main():
     parser=argparse.ArgumentParser(description='Phone Platform: локальный Docker OpenCode и SSH-туннель к своему серверу')
     sub=parser.add_subparsers(dest='command')
-    for name in ['init','up','local','down','status','doctor','public-key','remote-instructions']:
+    for name in ['init','up','local','down','status','doctor','public-key','remote-instructions','connect-routerai']:
         sub.add_parser(name)
     pins=sub.add_parser('pin',help='Закрепить публичные ключи, полученные по доверенному каналу')
     pins.add_argument('--jump-public-key',type=Path)
@@ -208,6 +209,12 @@ def main():
     config=configuration(require_remote=command in ['up','doctor'])
     read_pair()
     cmd=compose(ROOT,config)
+    if command=='connect-routerai':
+        runtime=ROOT/'secrets/local-opencode.json'
+        private_file(runtime)
+        organization=str(uuid.UUID(json.loads(runtime.read_text())['organization_id']))
+        execute([sys.executable,str(ROOT/'scripts/connect-routerai.py'),'--organization',organization,'--project',config['PHONE_ANALYZER_PROJECT']],config=config)
+        return 0
     if command=='local':
         execute(cmd+['up','-d','--build','--wait','model-runner'],config=config)
         print('Локальный connector запущен; SSH-туннель не запускался')

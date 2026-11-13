@@ -27,7 +27,10 @@ pub fn validate_config(config: &Value) -> Result<url::Url> {
         return Err(ProviderError::permanent("asr_runner_url_mismatch"));
     }
     if uses_local_credentials(config) {
-        if config["model"] != LOCAL_MODEL || config["local_provider"] != "apinex" {
+        let valid_local = (config["local_provider"] == "apinex" && config["model"] == LOCAL_MODEL)
+            || (config["local_provider"] == "routerai"
+                && MODELS.contains(&providers::required(config, "model")?));
+        if !valid_local {
             return Err(ProviderError::permanent("unsupported_asr_model"));
         }
         uuid::Uuid::parse_str(providers::required(config, "_organization_id")?)
@@ -116,13 +119,12 @@ pub async fn local_catalog(organization: uuid::Uuid) -> Result<Value> {
         let models = provider["models"].as_array().map(|models| models.iter().take(256).map(|model| json!({"id":model["id"].as_str().unwrap_or(""),"name":model["name"].as_str().unwrap_or("")})).collect::<Vec<_>>()).unwrap_or_default();
         json!({"id":provider["id"].as_str().unwrap_or(""),"name":provider["name"].as_str().unwrap_or(""),"models":models})
     }).collect::<Vec<_>>();
-    let models = result["asr_models"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|model| model["id"] == LOCAL_MODEL && model["provider"] == "apinex")
-        .map(|_| json!({"id":LOCAL_MODEL,"name":"APInex Voice STT","provider":"apinex"}))
-        .collect::<Vec<_>>();
+    let models = result["asr_models"].as_array().unwrap().iter().filter_map(|model| {
+        if model["id"] == LOCAL_MODEL && model["provider"] == "apinex" { Some(json!({"id":LOCAL_MODEL,"name":"APInex Voice STT","provider":"apinex"})) }
+        else if model["provider"] == "routerai" && MODELS.contains(&model["id"].as_str().unwrap_or("")) {
+            Some(json!({"id":model["id"],"name":if model["id"] == MODELS[0] {"RouterAI · Parakeet Ultra"} else {"RouterAI · Nemotron 3.5 Transcribe"},"provider":"routerai"}))
+        } else { None }
+    }).collect::<Vec<_>>();
     Ok(json!({"available":result["available"],"providers":providers,"asr_models":models}))
 }
 async fn response(
@@ -183,13 +185,17 @@ async fn response(
 }
 pub async fn test_connection(config: &Value) -> Result<Value> {
     let base = validate_config(config)?;
+    let mut payload = json!({"model":config["model"]});
+    if uses_local_credentials(config) {
+        payload["local_provider"] = config["local_provider"].clone();
+    }
     let result = response(
         authenticated_request(
             config,
             providers::http_client()?.post(base.join("asr/test").unwrap()),
         )?
         .timeout(Duration::from_secs(20))
-        .json(&json!({"model":config["model"]}))
+        .json(&payload)
         .send()
         .await,
     )
@@ -198,7 +204,7 @@ pub async fn test_connection(config: &Value) -> Result<Value> {
         return Err(ProviderError::permanent("invalid_transcript_response"));
     }
     Ok(
-        json!({"ok":true,"state":"configured","message":if uses_local_credentials(config){"Локальный Docker-коннектор и существующий доступ APInex проверены. Аудио не отправлялось."}else{"Docker-коннектор и ключ OpenRouter проверены. Распознавание записи этой проверкой не запускалось."}}),
+        json!({"ok":true,"state":"configured","message":if uses_local_credentials(config){"Локальный Docker-коннектор и существующий доступ выбранного провайдера проверены. Аудио не отправлялось."}else{"Docker-коннектор и ключ OpenRouter проверены. Распознавание записи этой проверкой не запускалось."}}),
     )
 }
 pub async fn transcribe(config: &Value, path: &Path, duration: f64) -> Result<Value> {
@@ -222,6 +228,7 @@ pub async fn transcribe(config: &Value, path: &Path, duration: f64) -> Result<Va
     let client = providers::http_client()?;
     let mut combined = vec![];
     let mut cost = Some(0.0);
+    let mut provider_cost = Some(0.0);
     let mut seconds = Some(0.0);
     let mut input_tokens = Some(0u64);
     let mut output_tokens = Some(0u64);
@@ -242,10 +249,21 @@ pub async fn transcribe(config: &Value, path: &Path, duration: f64) -> Result<Va
         if !["wav", "mp3", "mp4", "flac", "m4a", "ogg", "webm", "aac"].contains(&format.as_str()) {
             return Err(ProviderError::permanent("recording_format_unknown"));
         }
-        let raw = response(authenticated_request(config, client.post(base.join("asr/transcriptions").unwrap()))?
+        let mut payload = json!({"model":config["model"],"input_audio":{"data":STANDARD.encode(bytes),"format":format},"response_format":"verbose_json"});
+        if uses_local_credentials(config) {
+            payload["local_provider"] = config["local_provider"].clone();
+        }
+        let raw = response(
+            authenticated_request(
+                config,
+                client.post(base.join("asr/transcriptions").unwrap()),
+            )?
             .timeout(Duration::from_secs(65))
-            .json(&json!({"model":config["model"],"input_audio":{"data":STANDARD.encode(bytes),"format":format},"response_format":"verbose_json"}))
-            .send().await).await?;
+            .json(&payload)
+            .send()
+            .await,
+        )
+        .await?;
         let part_duration = if chunks.len() > 1 {
             (duration - chunk.offset)
                 .max(0.)
@@ -269,8 +287,18 @@ pub async fn transcribe(config: &Value, path: &Path, duration: f64) -> Result<Va
             combined.push(segment);
         }
         let valid_nonnegative = |v: &Value| v.as_f64().filter(|v| v.is_finite() && *v >= 0.);
-        cost = cost
-            .zip(valid_nonnegative(&raw["usage"]["cost"]))
+        cost = if uses_local_credentials(config) && config["local_provider"] == "routerai" {
+            None
+        } else {
+            cost.zip(valid_nonnegative(&raw["usage"]["cost"]))
+                .map(|(sum, n)| sum + n)
+        };
+        provider_cost = provider_cost
+            .zip(if raw["usage"]["provider_currency"] == "RUB" {
+                valid_nonnegative(&raw["usage"]["provider_cost"])
+            } else {
+                None
+            })
             .map(|(sum, n)| sum + n);
         seconds = seconds
             .zip(valid_nonnegative(&raw["usage"]["seconds"]))
@@ -289,6 +317,6 @@ pub async fn transcribe(config: &Value, path: &Path, duration: f64) -> Result<Va
         });
     }
     Ok(
-        json!({"provider":"opencode","upstream_provider":if uses_local_credentials(config){"apinex"}else{"openrouter"},"model":config["model"],"state":"ready","language":language.unwrap_or_else(||"unknown".into()),"role_confidence":"uncertain","segments":combined,"usage":{"cost":cost,"seconds":seconds,"input_tokens":input_tokens,"output_tokens":output_tokens}}),
+        json!({"provider":"opencode","upstream_provider":if uses_local_credentials(config){config["local_provider"].as_str().unwrap_or("unknown")}else{"openrouter"},"model":config["model"],"state":"ready","language":language.unwrap_or_else(||"unknown".into()),"role_confidence":"uncertain","segments":combined,"usage":{"cost":cost,"provider_cost":provider_cost,"provider_currency":if provider_cost.is_some(){json!("RUB")}else{Value::Null},"seconds":seconds,"input_tokens":input_tokens,"output_tokens":output_tokens}}),
     )
 }

@@ -95,3 +95,12 @@ class AnalyzerTests(unittest.TestCase):
   self.assertEqual(cmd[cmd.index('--project-name')+1],'phone-analyzer-test');self.assertIn(str(ROOT/'infra/compose.analyzer-local.yml'),cmd)
 
 if __name__=='__main__':unittest.main()
+
+class RouterAICommandTests(unittest.TestCase):
+ def test_connect_routerai_uses_bound_company_without_requiring_id_or_key_arguments(self):
+  import json,sys
+  with tempfile.TemporaryDirectory()as d:
+   root=Path(d);(root/'secrets').mkdir();runtime=root/'secrets/local-opencode.json';org='11111111-1111-4111-8111-111111111111';runtime.write_text(json.dumps({'organization_id':org,'providers':{'other':{'options':{'apiKey':'synthetic-private-key'}}}}));runtime.chmod(0o600)
+   with patch.object(analyzer,'ROOT',root),patch.object(sys,'argv',['start-analyzer.sh','connect-routerai']),patch.object(analyzer,'configuration',return_value={'PHONE_ANALYZER_PROJECT':'phone-analyzer'}),patch.object(analyzer,'read_pair',return_value='synthetic-pairing-password'),patch.object(analyzer,'execute')as execute:
+    self.assertEqual(analyzer.main(),0)
+   argv=execute.call_args.args[0];self.assertIn(org,argv);self.assertNotIn('synthetic-private-key',repr(argv));self.assertNotIn('synthetic-pairing-password',repr(argv));self.assertTrue(argv[1].endswith('connect-routerai.py'))
