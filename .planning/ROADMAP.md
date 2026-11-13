@@ -178,3 +178,10 @@ Research→independentPLAN-CHECKPASS0/3→execute→implementationreviewPASS; co
 **Depends on:** Phases11,14–17; phase12paused.
 **Plan:**18-01 boundedCONNECT/proxyenv +failedreauthpreservation; tenantboundlocalprovider/catalog/keylessUI/explicitASR; saferelease/UAT.
 Research→independentPLAN-CHECKrevision1PASS→execute→independentROOT/AUTHreviewsPASS→runtime15-d59a82e8healthy. НастоящийdeviceflowPASS, providerkeylessUI/catalog/foreigndenialPASS. APInexреальный402/allowancefalse, freellmapiendpointoff, пользовательскийOAuth/inference/UATpending; никакойложнойготовностимодели. ИсходныйTelphinretrybackoff/checkpoint43370сохранён. Деталиphases/18-assistant-opencode-recovery.
+
+### Phase19: RouterAI / Original Speech Models
+
+**Goal:** выбранныйпользователемRouterAIвместопредположенияAPInex/OpenRouter, исходные2STTмоделичерезlocalDockerбезповторногоключа.
+**Depends on:** Phase18; phase12paused.
+**Plan:**19-01 explicitRouterAIprotocol/currency/keylessUI; existingcredentialimport/PKCEone-timeaccountconsent; tests/review/rollout/UAT.
+Research→PLAN-CHECKrevision1PASS→execute→independentreviewPASS→code/runtime15-df7a162 publishedhealthy. RouterAIpubliccatalog200/exact2models, privatecallback/helperfixtures/tenantdeny/currencytestsPASS; реальныйaccountconsentбраузероткрытawaitinguser. Useridentity/inference/ASRqualitypending; no paidmodel/audio/operatorjobs. ИсходныйTelphinretry/checkpointсохранён, другиеphasesacceptanceневыдуманы. Документыphases/19-routerai-local-provider.

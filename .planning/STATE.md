@@ -2,23 +2,29 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Phone Platform
-status: phase_18_automated_verified_human_uat_pending
-stopped_at: Phase18 production15-d59a82e healthy, realCodexdeviceproxyPASS, tenantboundkeylessOpenCodeUI, actualAPInex402 externalquota; userOAuth/inferenceUATpending; phase17retrybackoffpreserved, phase12paused
-last_updated: "2026-11-12"
+status: phase_19_automated_verified_routerai_consent_pending
+stopped_at: Phase19 RouterAI code df7a162 published/healthy, exact2ASR+keylessPKCE helper implemented; browser consent awaiting user, actual RouterAIaccount/ASRpending; Telphinretry preserved; phase12paused
+last_updated: "2026-11-13"
 progress:
-  total_phases: 18
-  implemented_phases: 17
-  locally_verified_phases: 17
+  total_phases: 19
+  implemented_phases: 18
+  locally_verified_phases: 18
   accepted_phases: 0
   completed_phases: 0
-  total_plans: 37
-  implemented_plans: 35
+  total_plans: 38
+  implemented_plans: 36
   completed_plans: 1
 ---
 
 # Project State
 
-## Текущее состояние — фаза18
+## Текущее состояние — фаза19
+
+Пользователь подтвердил RouterAI. Егоpubliccatalog606 содержитобаисходныхSTTmodelID; наэтомкомпьютереестьproviderdefs, credentialsнетниinline/env/legacy/SQLite, вPhone-компанииASR/analysisconnectionsещёнесохранены. ДобавленыexplicitlocalProviderRouterAI/fixedendpoint/tenant/keyseparation, exact2ASRcatalog+OpenCodeconfig, RUBseparate/commoncostNULLвключаяnativeanalysis. UI98PASS/невыбираетплатныемоделиавтоматически. OwnPKCEhelper/команда ./start-analyzer.sh connect-routerai открываетаккаунтбезкопированияключа; current-filelockmerge/600/atomicinstallrollback, Host/state/iss/TTL/query/replay/oneexchangeпроверены.
+
+GSDPLAN-CHECKrevision1/reviewPASS. Code df7a162/nativeimages15-df7a162 опубликованы, API/worker/clientобновлены8healthy; unchangedassistant/relayсохраненыживымиподстарымtagсодинаковымиdigests. ЛокальныйOpenCodeпересобранhealthy, SSH/pairingсохранены; Telphinretry/attempt2/next/window33page7/calls43370неизменилисьприidleworkerlease0rollout. Node30, workerlib19+HTTP13+providers16(1existingPGskip), Python29, frontend98/typebuildPASS; основныеREDпроверены, каждыйassertнеобъявленRED. Publicowner/tenant/media/Codexstatus/settingsdesktop/mobile/doctorPASS. Helperреальнозапущен, браузерRouterAIоткрыт, состояниеawaiting_consent; подтверждениеаккаунта/реальныйinference/ASRqualitypending, никакихплатныхproviderзапросов/аудиооператоромвфазе19. Детали19-SUMMARY/VERIFICATION/UAT. Другиеhuman-gates/phase12stashсохранены.
+
+## История реализации — фаза18
 
 Исправлен Codexremote403: authenticatedexact-hostCONNECTчерезсуществующийlocalSSH4096, explicitproxyenv/NO_PROXY; настоящийpinnedCLIdeviceflowчерезштатныйproductionserviceenvPASS. Переавторизациясохраняетстаруюidentity приошибке; pending/prepare/commit/receipt/logout и durablefailclosedbeforepromotion провереныNode/реальнымPGHTTP. IndependentPLAN-CHECKrevision1 иROOT/AUTHreviewPASSпослеfixes. Code d59a82e/runtime15-d59a82e опубликованы,8healthy, workeridlelease0передзаменой; Telphinoriginalretry/attempts/next_attempt/window33/page7/calls43370сохранены.
 
